@@ -47,6 +47,7 @@ class _Proc:
 
 
 @pytest.mark.parametrize("cmd,expected", [
+    (["python", "-m", "uvicorn", "bootstrap.app:app", "--port", "8000"], True),
     (["python", "-m", "uvicorn", "server:app", "--port", "8000"], True),
     (["C:/x/veda.exe", "server"], True),
     (["python", "-m", "controller.cli", "server"], True),

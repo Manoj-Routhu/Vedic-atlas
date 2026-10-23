@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-import server
+from bootstrap.builders import inference as inference_builder
 from core.config import load_full_config
 from service.memory.memory_indexer import MemoryIndexer
 from service.memory.semantic_recall import SemanticRecall
@@ -52,13 +52,13 @@ def test_model_without_tokenizer_is_rejected(tmp_path):
 def test_server_turns_a_missing_model_into_memory_off_not_a_crash(tmp_path):
     cfg = load_full_config().model_copy(deep=True)
     cfg.embedding.enabled, cfg.embedding.model_path = True, str(tmp_path / "missing")
-    assert server._build_embedding(cfg) is None
+    assert inference_builder.build_embedding(cfg) is None
 
 
 def test_server_does_not_build_it_when_disabled():
     cfg = load_full_config().model_copy(deep=True)
     cfg.embedding.enabled = False
-    assert server._build_embedding(cfg) is None
+    assert inference_builder.build_embedding(cfg) is None
 
 
 # ---- real model ------------------------------------------------------------------------------

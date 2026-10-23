@@ -519,13 +519,13 @@ def test_playback_interrupt_drops_queued_audio_and_goes_idle(monkeypatch):
 # ---- wake word fails closed ---------------------------------------------------------
 
 def test_a_configured_wake_word_that_cannot_start_disables_voice_instead_of_listening_always(monkeypatch):
-    import server
+    from bootstrap.builders import voice as voice_builder
     from core.config import load_full_config
 
     cfg = load_full_config().model_copy(deep=True)
     cfg.audio.voice_enabled, cfg.audio.wake_word_enabled, cfg.audio.wake_engine = True, True, "openwakeword"
-    for name in ("_build_vad", "_build_stt", "_build_tts", "_build_speaker"):
-        monkeypatch.setattr(server, name, lambda *_a, **_k: object())
-    monkeypatch.setattr(server, "_build_wake_word", lambda _cfg: None)  # the model failed to load
-    session = server._build_voice_session(cfg, audio=object(), capture_gate=_Gate(), supervisor=object(), event_bus=object())
+    for name in ("build_vad", "build_stt", "build_tts", "build_speaker"):
+        monkeypatch.setattr(voice_builder, name, lambda *_a, **_k: object())
+    monkeypatch.setattr(voice_builder, "build_wake_word", lambda _cfg: None)  # the model failed to load
+    session = voice_builder.build_voice_session(cfg, audio=object(), capture_gate=_Gate(), supervisor=object(), event_bus=object())
     assert session is None

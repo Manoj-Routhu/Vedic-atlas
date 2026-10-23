@@ -1,6 +1,6 @@
-"""Boot the REAL composition root (server.bootstrap) with a fake model and drive turns through the supervisor.
+"""Boot the REAL composition root (bootstrap.container.build_app_state) with a fake model and drive turns through the supervisor.
 
-Unit tests build the pieces by hand, so a wiring mistake in server.py (a missing skill registration, a dropped
+Unit tests build the pieces by hand, so a wiring mistake in src/bootstrap/ (a missing skill registration, a dropped
 argument) passes them all. This one catches it. It runs in a subprocess from a throwaway COPY of src/ and config/:
 PROJECT_ROOT, and therefore data/ (database, saved facts, models), resolves to the temp folder, so the user's real
 data/ is never read or written.
@@ -19,7 +19,7 @@ import asyncio, json, os, sys
 sys.path.insert(0, "src")
 for _k in ("GOOGLE_API_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"):
     os.environ.pop(_k, None)   # an unlinked account: no network may be attempted
-import server
+from bootstrap import container
 from fastapi import FastAPI
 from core.config import ensure_dirs
 from core.constants import PROJECT_ROOT
@@ -54,13 +54,13 @@ class FakeClient:
 
 
 client, system = FakeClient(), FakeSystem()
-server._build_inference = lambda cfg, gov, lock=None, thread_lock=None: (client, client)
-server._build_system_control = lambda: system
+container.build_inference = lambda cfg, gov, lock=None, thread_lock=None: (client, client)
+container.build_system_control = lambda: system
 
 ensure_dirs()
 init_tables()
 app = FastAPI()
-server.bootstrap(app)
+container.build_app_state(app)
 sup = app.state.supervisor
 names = {s.name for s in app.state.skill_registry.list_all()}
 assert {"app_control", "volume_control", "device_status", "get_weather", "get_weather_forecast", "convert_currency",
