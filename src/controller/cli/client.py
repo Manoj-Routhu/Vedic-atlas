@@ -8,9 +8,9 @@ Donor: veda/cli/client.py, read in full. Changes:
     `StreamRequest` (schemas/chat.py) no longer have the field at all.
   - `status_snapshot()` drops the `vision`/`teams` probes (routes don't
     exist); keeps `gov`/`yolo`/`proac`.
-  - Auto-spawn now launches `uvicorn server:app` directly (this repo's
-    composition root) instead of `python -m veda` (the donor's package
-    shim).
+  - Auto-spawn now launches `uvicorn bootstrap.app:app` directly (this repo's
+    composition root, src/bootstrap/) instead of `python -m veda` (the donor's
+    package shim).
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ class VedaClient:
             cmd = " ".join(proc.cmdline()).lower()
         except Exception:
             return False
-        return "server:app" in cmd or ("veda" in cmd and " server" in cmd) or ("controller.cli" in cmd and "server" in cmd)
+        return "bootstrap.app:app" in cmd or "server:app" in cmd or ("veda" in cmd and " server" in cmd) or ("controller.cli" in cmd and "server" in cmd)
 
     def stop_server(self, *, wait_secs: float = 10.0) -> int | None:
         """Stop the Veda server on this client's port. Returns the stopped pid, or None if none was running.
@@ -238,12 +238,8 @@ class VedaClient:
         log_file = open(log_path, "wb")
         kwargs: dict[str, Any] = {
             "stdout": log_file, "stderr": log_file, "stdin": subprocess.DEVNULL,
-            # cwd must be src/, not repo_root: the repo also has a root-level
-            # server.py (the `veda server` launcher script, no `app` attribute).
-            # With cwd=repo_root, python -m uvicorn puts repo_root on
-            # sys.path[0] ahead of the PYTHONPATH entry above, so "server:app"
-            # resolves to the wrong file ("Attribute 'app' not found in module
-            # 'server'"). cwd=src_dir makes "server" unambiguous.
+            # The app is addressed by its full module path (bootstrap.app:app), so it resolves the same
+            # whatever the working directory; src/ is on PYTHONPATH above.
             "env": env, "cwd": str(src_dir),
         }
         if sys.platform == "win32":
@@ -254,7 +250,7 @@ class VedaClient:
             kwargs["start_new_session"] = True
         try:
             proc = subprocess.Popen(
-                [sys.executable, "-m", "uvicorn", "server:app", "--host", host, "--port", port],
+                [sys.executable, "-m", "uvicorn", "bootstrap.app:app", "--host", host, "--port", port],
                 **kwargs,
             )
         finally:

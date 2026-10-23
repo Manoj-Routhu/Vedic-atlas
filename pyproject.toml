@@ -114,9 +114,6 @@ dev = ["pytest>=8.0"]
 [project.scripts]
 veda = "controller.cli.__main__:main"
 
-[tool.setuptools]
-py-modules = ["server"]         # src/server.py is the uvicorn entry point ("server:app")
-
 [tool.setuptools.packages.find]
 where = ["src"]
 exclude = ["*.egg-info"]
