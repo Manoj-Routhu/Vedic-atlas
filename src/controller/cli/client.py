@@ -250,7 +250,10 @@ class VedaClient:
             kwargs["start_new_session"] = True
         try:
             proc = subprocess.Popen(
-                [sys.executable, "-m", "uvicorn", "bootstrap.app:app", "--host", host, "--port", port],
+                [
+                    sys.executable, "-m", "uvicorn", "bootstrap.app:app",
+                    "--host", host, "--port", port, "--no-access-log",
+                ],
                 **kwargs,
             )
         finally:
