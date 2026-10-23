@@ -13,8 +13,9 @@ the wake-word / Piper models use them), so this adapter has no extra dependencie
 The model is staged, never downloaded at runtime (REQ-M-02): `data/bge-small-en-v1.5/` must contain
 `model.onnx` and `tokenizer.json` (scripts/setup_pi.sh fetches them from BAAI/bge-small-en-v1.5).
 
-BGE pooling: the embedding is the hidden state of the first ([CLS]) token, L2-normalised, which is also what
-makes cosine similarity a plain dot product in the vector store.
+Pooling is configurable (`embedding.pooling`): "cls" (BGE, default) takes the first ([CLS]) token's hidden state;
+"mean" averages the token states under the attention mask (all-MiniLM, e5, gte). Either way the vector is
+L2-normalised, which makes cosine similarity a plain dot product in the vector store.
 """
 
 from __future__ import annotations
@@ -25,14 +26,24 @@ from pathlib import Path
 from domain.value_objects.embedding import Embedding
 
 _MODEL_FILES = ("model.onnx", "onnx/model.onnx", "model_optimized.onnx", "model_quantized.onnx")
-_MAX_TOKENS = 512          # BGE-small's context limit; longer text is truncated, not rejected
+_MAX_TOKENS = 512          # default context limit; longer text is truncated, not rejected
+_POOLING = ("cls", "mean")
 _ORT_THREADS = 2           # a short sentence is cheap; leave the cores to the language model
 
 
 class OnnxEmbeddingProvider:
     """Implements EmbeddingPort with a local ONNX sentence-embedding model."""
 
-    def __init__(self, model_dir: str | Path, model_id: str = "BAAI/bge-small-en-v1.5"):
+    def __init__(
+        self,
+        model_dir: str | Path,
+        model_id: str = "BAAI/bge-small-en-v1.5",
+        pooling: str = "cls",
+        max_tokens: int = _MAX_TOKENS,
+    ):
+        if pooling not in _POOLING:
+            raise ValueError(f"embedding pooling must be one of {_POOLING}, got {pooling!r}")
+        self._pooling = pooling
         directory = Path(model_dir)
         model_file = next((directory / name for name in _MODEL_FILES if (directory / name).is_file()), None)
         tokenizer_file = directory / "tokenizer.json"
@@ -40,15 +51,15 @@ class OnnxEmbeddingProvider:
             raise FileNotFoundError(
                 f"embedding model not found in {directory} - it needs model.onnx and tokenizer.json "
                 "(this build never downloads models at runtime). Run scripts/setup_pi.sh, or download "
-                "onnx/model.onnx and tokenizer.json from https://huggingface.co/BAAI/bge-small-en-v1.5 "
-                "into that folder."
+                "onnx/model.onnx and tokenizer.json of your chosen model (for the default, "
+                "https://huggingface.co/BAAI/bge-small-en-v1.5) into that folder."
             )
         import onnxruntime as ort  # imported lazily, see LlamaCppClient's rationale
         from tokenizers import Tokenizer
 
         self._model_id = model_id
         self._tokenizer = Tokenizer.from_file(str(tokenizer_file))
-        self._tokenizer.enable_truncation(max_length=_MAX_TOKENS)
+        self._tokenizer.enable_truncation(max_length=max_tokens)
 
         options = ort.SessionOptions()
         options.intra_op_num_threads = _ORT_THREADS
@@ -73,7 +84,11 @@ class OnnxEmbeddingProvider:
         if "token_type_ids" in self._input_names:
             feeds["token_type_ids"] = np.zeros_like(feeds["input_ids"])
         hidden = self._session.run([self._output], feeds)[0]      # (1, tokens, dim)
-        vector = hidden[0, 0].astype(np.float64)                  # the [CLS] token
+        if self._pooling == "mean":
+            mask = feeds["attention_mask"][0][:, None].astype(np.float64)
+            vector = (hidden[0].astype(np.float64) * mask).sum(axis=0) / max(float(mask.sum()), 1.0)
+        else:
+            vector = hidden[0, 0].astype(np.float64)              # the [CLS] token
         norm = float(np.linalg.norm(vector))
         if norm > 0.0:
             vector = vector / norm

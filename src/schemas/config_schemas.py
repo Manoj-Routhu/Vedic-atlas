@@ -36,7 +36,7 @@ Section-by-section changes from the donor:
   - `HooksConfig` dropped entirely: the donor's version was a list of
     `"builtin:x"` name strings with no dynamic loader behind it — there
     is exactly one fixed set of built-in hooks
-    (`service/hooks/dispatcher.py`), and `server.py` wires them directly.
+    (`service/hooks/dispatcher.py`), and `bootstrap/builders/safety.py` wires them directly.
     A config file whose only possible values are the same five hardcoded
     strings adds a config surface with no real flexibility behind it.
   - New: `PrivacyConfig` (`mute_gpio_pin`, `indicator_gpio_pin` for the Pi
@@ -112,6 +112,8 @@ class EmbeddingConfig(BaseModel):
     model_id: str = "BAAI/bge-small-en-v1.5"
     model_path: str | None = None
     cache_dir: str | None = "data/embeddings"
+    pooling: Literal["cls", "mean"] = "cls"  # "cls" for BGE; "mean" for all-MiniLM / e5 / gte style models
+    max_tokens: int = 512        # the model's context limit; longer text is truncated
     top_k: int = 5
     min_score: float = 0.3  # minimum cosine similarity to inject a memory
     margin: float | None = None  # also keep hits within this of the best one (up to top_k); None = no margin rule
