@@ -4,7 +4,7 @@ Donor: veda/service/skill_service.py's SkillService, read in full and
 ported near-verbatim. Confirms a finding from earlier grounding: this
 class DOES correctly implement hook firing when given a HookRegistry —
 the gap in the donor was never here, it was that `app.py::_bootstrap_agents`
-constructed this with `hook_registry=None`. server.py's composition step
+constructed this with `hook_registry=None`. bootstrap/'s composition step
 (a later batch) must pass a real HookRegistry for pre/post-skill hooks
 to actually fire.
 """

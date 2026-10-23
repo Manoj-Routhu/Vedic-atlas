@@ -9,7 +9,7 @@ this layer:
    from `tpa/`. Every dependency on hardware/network/DB arrives as a
    constructor-injected `domain.ports.*` type.
 2. **100% constructor injection.** Concrete adapters are only ever
-   constructed in `src/server.py` (the composition root) and passed in.
+   constructed in `src/bootstrap/` (the composition root) and passed in.
 3. **Domain policies hold the pure decision logic; `service/` holds the
    orchestration.** Where a decision is tricky enough to want its own pure
    function (routing, permission gating, session boundaries, redaction),
@@ -103,7 +103,7 @@ and logs a `"chat"` memory action.
 
 ### Tools: manifests, skills, `ToolUseGuard`
 
-Every tool is a manifest in `config/tools/*.yaml` plus a `ManifestSkill` registered in `server.py`; full design in
+Every tool is a manifest in `config/tools/*.yaml` plus a `ManifestSkill` registered in `bootstrap/container.py`; full design in
 [08-tool-harness.md](08-tool-harness.md). Today: `get_weather`, `get_weather_forecast`, `convert_currency`,
 `web_search`, `tasks`, `remember`, and the device tools `app_control`, `volume_control`, `device_status`
 (`service/skills/builtin/system_control.py`; they replaced the old `SystemAgent`'s separate unconstrained planner).
@@ -235,7 +235,7 @@ able to coexist.
   a raised exception propagates; for other events, exceptions are
   swallowed and logged (post-hooks warn, never abort).
 - **`dispatcher.py`**: factory functions producing the actual hook
-  closures registered in `server.py` — `create_permission_check_hook`,
+  closures registered in `bootstrap/builders/safety.py` — `create_permission_check_hook`,
   `create_rate_limit_hook`, `create_input_validator_hook`,
   `create_output_validator_hook`, `create_audit_hook`,
   `create_error_log_hook`.
@@ -243,7 +243,7 @@ able to coexist.
 ## `service/inference/` — the resilience stack
 
 Two composable wrapper classes, both themselves implementing
-`InferencePort`, composed in `server.py` as:
+`InferencePort`, composed in `bootstrap/builders/inference.py` as:
 
 ```
 SingleFlight( GracefulDegradation( primary_adapter, fallback_adapter ) )
@@ -262,7 +262,7 @@ SingleFlight( GracefulDegradation( primary_adapter, fallback_adapter ) )
   secondary adapter if one was provided. `stream()` only falls back if
   zero chunks were yielded yet — once committed to a stream, it never
   switches mid-stream. Optional `on_success`/`on_failure` callbacks are
-  where `server.py` wires the governance circuit breaker's
+  where `bootstrap/` wires the governance circuit breaker's
   `record_success`/`record_failure`.
 
 ## `service/conversation/`
@@ -274,7 +274,7 @@ SingleFlight( GracefulDegradation( primary_adapter, fallback_adapter ) )
   global across sessions. `get_context_summary()` tiers older compacted
   summaries with recent raw turns.
 - **`summariser.py` — `ConversationSummariser`**: background dual-loop
-  (summarization tick + GC), started/stopped from `server.py`'s
+  (summarization tick + GC), started/stopped from `bootstrap/lifespan.py`'s
   `lifespan()`. Picks the oldest eligible session (idle past a threshold,
   or turn count over a batch threshold, skipping sessions that have
   exhausted 3 retry attempts), summarizes via one LLM call, persists, and
@@ -443,7 +443,7 @@ offers `count_tokens`.
   the audio buffer is drained, specifically so the tail of the assistant's
   own voice doesn't land in the buffer after the drain.
 
-  **Wake word fails closed.** `server._build_voice_session` refuses to start the voice loop if
+  **Wake word fails closed.** `bootstrap.builders.voice.build_voice_session` refuses to start the voice loop if
   a wake engine is configured but could not be built (missing model, import error) — it never
   falls back to listening continuously. Always-on listening is an explicit opt-in
   (`audio.wake_engine: none`).

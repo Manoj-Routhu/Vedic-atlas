@@ -47,7 +47,7 @@ This is a **ports-and-adapters (hexagonal) architecture**:
   service-layer class receives its dependencies as constructor-injected
   `domain.ports.*` types. This is enforced by convention/discipline, not a
   linter rule, but it holds throughout the codebase.
-- **`src/server.py`** is the **composition root** — the one place where
+- **`src/bootstrap/`** is the **composition root** — the one place where
   concrete `tpa/` adapters are constructed and wired into `domain/ports/`
   interfaces, then handed to `service/` classes. See
   [04-controller-layer.md](04-controller-layer.md#composition-root) for the
@@ -107,7 +107,7 @@ single example to hold in your head:
 5. That `InferencePort` is actually
    `SingleFlight(GracefulDegradation(OllamaClient))` — see
    [03-service-layer.md](03-service-layer.md#serviceinference) — composed
-   in `server.py` at boot. `SingleFlight` serializes concurrent calls (CPU-
+   in `bootstrap/` at boot. `SingleFlight` serializes concurrent calls (CPU-
    bound local inference doesn't parallelize usefully); `GracefulDegradation`
    retries once and can fall back to a secondary backend.
 6. The reply streams back chunk by chunk through `execute_stream` →
@@ -118,7 +118,7 @@ single example to hold in your head:
 
 ## Two parallel interfaces, one backend
 
-The FastAPI server (`src/server.py`, mounted routes under `/api/*`) and the
+The FastAPI server (`src/bootstrap/app.py`, mounted routes under `/api/*`) and the
 terminal CLI (`src/controller/cli/`, the `veda` command) are **both clients
 of the same running server** — the CLI is not a separate code path into the
 business logic. `controller/cli/client.py`'s `VedaClient` talks to the
@@ -133,7 +133,7 @@ true interface into the system; the CLI is UX sugar on top of it.
 | [01-domain-layer.md](01-domain-layer.md) | Entities, value objects, ports (full contracts), policies, events |
 | [02-tpa-adapters.md](02-tpa-adapters.md) | Every concrete adapter, grouped by which port it implements |
 | [03-service-layer.md](03-service-layer.md) | Agents, skills, governance vs. guardrails, inference resilience, voice pipeline, and every other `service/` subpackage |
-| [04-controller-layer.md](04-controller-layer.md) | Routes, SSE, CLI, the composition root (`server.py`), full bootstrap sequence |
+| [04-controller-layer.md](04-controller-layer.md) | Routes, SSE, CLI, the composition root (`src/bootstrap/`), full bootstrap sequence |
 | [05-exception-handling.md](05-exception-handling.md) | `AppException`, error codes, the `AppResponse` envelope, HTTP status mapping |
 | [06-configuration.md](06-configuration.md) | Config loading, `config/*.yaml`, constants, logging, the full `AppConfig` schema |
 | [08-tool-harness.md](08-tool-harness.md) | How tool calls work on the small local model: manifests, staged turns, online tools (weather, currency, search), traces, evaluation |

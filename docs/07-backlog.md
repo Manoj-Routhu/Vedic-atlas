@@ -29,8 +29,8 @@ offline. Code now in place:
 - `tpa/speaker/resemblyzer_speaker_recognizer.py` — `ResemblyzerSpeakerRecognizer`
 - `tpa/speaker/resemblyzer_speaker_enroller.py` — `ResemblyzerSpeakerEnroller`
 - `tpa/speaker/resemblyzer_profile_store.py` — `ResemblyzerProfileStore`
-- `server.py`'s `_build_wake_word()` / `_build_speaker_id()` /
-  `_build_speaker_enrollment_service()` updated with the new branches
+- `bootstrap/builders`'s `build_wake_word()` / `build_speaker_id()` /
+  `build_speaker_enrollment_service()` updated with the new branches
 - `config_schemas.py` / `config/audio.yaml` updated — `wake_engine` now
   defaults to `openwakeword`, `speaker_id.backend` now defaults to
   `resemblyzer`

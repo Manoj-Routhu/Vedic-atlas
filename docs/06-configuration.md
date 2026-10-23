@@ -94,7 +94,7 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 
 Every model path, DB path, and log path elsewhere in the codebase is
 resolved relative to `PROJECT_ROOT`/`DATA_DIR`, not the process's current
-working directory — which is why `src/server.py` must be run with `src/`
+working directory — which is why the app (`bootstrap.app:app`) must be run with `src/`
 on `PYTHONPATH` (see [04-controller-layer.md](04-controller-layer.md#running-it))
 rather than relying on relative-path assumptions.
 
@@ -117,7 +117,7 @@ format:
 
 A module-level `logger = configure_logging()` default instance exists so
 `from core.logging_config import logger` works anywhere before
-`server.py`'s `lifespan()` calls `configure_logging(cfg.app.log_level)`
+`bootstrap/lifespan.py`'s `lifespan()` calls `configure_logging(cfg.app.log_level)`
 with the real configured level at boot — every module in the codebase logs
 through this one shared logger instance.
 

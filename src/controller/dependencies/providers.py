@@ -4,7 +4,7 @@
 `_supervisor(request)` helper (approval.py, config.py) with the same
 "getattr + 503 if missing" shape; persona.py and chat.py instead read
 `app.state.X` unguarded. This module gives every route in this batch one
-consistent, typed way to reach the services server.py (Batch 11) will wire
+consistent, typed way to reach the services src/bootstrap/ wires
 onto `app.state` at startup, so a service that failed to initialize fails
 loudly with a 503 rather than an unhandled AttributeError deep in a route.
 """

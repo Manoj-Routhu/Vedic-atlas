@@ -70,7 +70,7 @@ path, e.g. `ErrorMessage.EGRESS_DENIED = "Outbound call to '{host}' denied — n
 
 ## Global handlers (`exceptions/handlers.py`)
 
-`register_exception_handlers(app)` is called once in `server.py`,
+`register_exception_handlers(app)` is called once in `bootstrap/app.py`,
 immediately after `FastAPI(...)` construction, and registers four handlers:
 
 1. **`RequestValidationError`** (FastAPI's own) → always 422. Flattens the

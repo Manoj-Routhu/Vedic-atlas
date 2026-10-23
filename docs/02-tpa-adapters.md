@@ -7,7 +7,7 @@ the one allow-listed HTTP client. Every class here implements exactly one
 `domain.ports.*` Protocol (see [01-domain-layer.md](01-domain-layer.md)
 for the contracts) and nothing in `service/` ever imports from here
 directly — adapters only reach `service/` by being constructed in
-`src/server.py` and injected as a port-typed dependency.
+`src/bootstrap/` and injected as a port-typed dependency.
 
 ## Port → adapter map
 
@@ -38,7 +38,7 @@ directly — adapters only reach `service/` by being constructed in
 
 `ClockPort`, `SensorPort`, and `VectorStorePort` are declared in `domain/ports/`
 but their concrete implementations live outside `tpa/` (e.g.
-`SqliteVectorStore` is wired directly in `server.py`) — not every port's
+`SqliteVectorStore` is wired directly in `bootstrap/container.py`) — not every port's
 adapter is necessarily under `tpa/`, but every adapter under `tpa/`
 implements a port.
 
@@ -107,7 +107,7 @@ implements a port.
   records older than `AGENT_MEMORY_RETENTION_DAYS` on every write).
 - **`persistence/migrations.py`**: `init_tables()` — creates tables via
   `Base.metadata.create_all(engine)` if they don't exist; called once at
-  boot in `server.py`'s `lifespan()`. `create_all` never alters an existing
+  boot in `bootstrap/lifespan.py`'s `lifespan()`. `create_all` never alters an existing
   table, so columns added later (e.g. `tasks.completed_at`) are applied by
   `_add_missing_columns()` (idempotent SQLite `ADD COLUMN`).
 - **`persistence/models/turn_trace.py` + `repositories/trace_repository.py`**:
@@ -167,7 +167,7 @@ exist in parallel hardware/software tiers, selected by config
   "Say hello" with 225 tokens of rambling); `think=False` disables
   reasoning-model "thinking" blocks (measured 16x speedup on Qwen3-8B for
   identical visible output). `verify_ready()`/`warmup()` are boot-time
-  helpers called from `server.py`.
+  helpers called from `bootstrap/`.
 - **`llama_cpp_client.py` — `LlamaCppClient`**: loads a local GGUF file
   directly via `llama-cpp-python`, no server process. Fails loudly at
   construction if the model file is missing.
@@ -178,7 +178,7 @@ exist in parallel hardware/software tiers, selected by config
   composition boundary.
 - **`gguf_model_manager.py` — `require_model(path, label="model")`**:
   centralizes the "fail loudly if the model file is missing, don't
-  auto-download" check so `server.py` can validate all configured model
+  auto-download" check so `bootstrap/` can validate all configured model
   paths up front at boot, rather than each adapter failing independently
   on first use.
 - **Constrained decoding**: both clients accept `json_schema` and `temperature`
@@ -192,7 +192,7 @@ exist in parallel hardware/software tiers, selected by config
   `model_id` is the stable model name, not a path). It needs
   `data/bge-small-en-v1.5/model.onnx` and `tokenizer.json` and **never downloads
   at runtime**; a missing model raises `FileNotFoundError` naming the files and
-  `scripts/setup_pi.sh`, which `_build_embedding` turns into "semantic memory OFF"
+  `scripts/setup_pi.sh`, which `build_embedding` turns into "semantic memory OFF"
   rather than a crash. It replaced a `fastembed`-based adapter: fastembed passed a
   folder path where it needs a model name (so a staged model still failed), and its
   extra native packages (`mmh3`, `py-rust-stemmers`) are blocked by Windows
@@ -322,7 +322,7 @@ replaced Eagle as the default (no API key, fully offline).
   installed, neither of which is required by the default backend above.
 
 Every adapter here degrades to "feature disabled," never crashes boot,
-on any construction failure — same shape as `_build_wake_word`.
+on any construction failure — same shape as `build_wake_word`.
 
 ## `tpa/wake_word/`
 

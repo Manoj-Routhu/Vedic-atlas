@@ -88,6 +88,6 @@ def configure_logging(level: str = "INFO") -> logging.Logger:
 
 
 # Default instance for modules that just need `from core.logging_config import logger`.
-# server.py should call configure_logging(cfg.log_level) once at startup to
+# bootstrap/lifespan.py should call configure_logging(cfg.log_level) once at startup to
 # apply the configured level; this default keeps imports working before that.
 logger = configure_logging()

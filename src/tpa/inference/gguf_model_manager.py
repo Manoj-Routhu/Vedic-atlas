@@ -3,7 +3,7 @@
 ★ New. Centralises the "no auto-download, fail loudly if missing" rule
 (REQ-M-02) in one place rather than scattering existence checks across
 every adapter that needs a model path. `LlamaCppClient` already checks
-its own path defensively; this manager is for server.py's composition
+its own path defensively; this manager is for bootstrap/'s composition
 step to validate ALL configured model paths up front, at boot, before
 any adapter is constructed — so a missing model fails at startup with a
 clear message, not on the first user turn.

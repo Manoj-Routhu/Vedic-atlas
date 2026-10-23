@@ -33,7 +33,7 @@ Needs `data/Qwen3-4B-Q4_K_M.gguf` (gitignored; path in `config/inference.yaml`) 
 
 ## Rules for the next person
 - **Never `rm -rf` the gitignored `data/` (models, `veda.db`, saved facts).** An earlier session did, after a smoke test, and lost the user's DB and saved facts (models were restored from copies). Use `tests/test_bootstrap_smoke.py`'s approach (a temp copy of `src/` + `config/`) for anything that boots the app.
-- Layering `controller -> service -> domain <- tpa`; `domain/` pure; concrete adapters only in `src/server.py`; errors via `AppException` + `ExceptionCode` (add a row in `exceptions/handlers.py::_STATUS_BY_CODE`).
+- Layering `controller -> service -> domain <- tpa`; `domain/` pure; concrete adapters only in `src/bootstrap/`; errors via `AppException` + `ExceptionCode` (add a row in `exceptions/handlers.py::_STATUS_BY_CODE`).
 - The Bash tool here eats backslashes in heredocs/`python - <<EOF` (`\n` becomes a newline). Write scripts with the Write tool and run them as files; use Edit for anything containing regexes or `\n`.
 - `docs/` and `data/` are gitignored; docs here were force-added (`git add -f docs/...`).
 - Do not commit: `.idea/`, `vedic-atlas-env/`, `wakeword_training/`, `src/*.egg-info/`, `tests/eval/results/routing-v1-prompt-*.json`.

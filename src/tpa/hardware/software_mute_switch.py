@@ -10,7 +10,7 @@ Privacy panel can badge it as such. A software switch can be bypassed by
 any code in this process; a hardware switch cuts the mic line. The PS
 requires a *physical* switch — this adapter exists so the rest of the
 capture-gate chain can be built, demoed, and tested now, and swapped for
-`GpioMuteSwitch`/`HidMuteSwitch` with a one-line change in server.py.
+`GpioMuteSwitch`/`HidMuteSwitch` with a one-line change in bootstrap/builders/audio.py.
 """
 
 from __future__ import annotations

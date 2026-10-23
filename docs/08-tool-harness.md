@@ -98,7 +98,7 @@ from ACTIVE (seen once with a mail search). Known, accepted: "cancel my 5 pm mee
 
 ## Adding a tool
 1. Write `config/tools/<name>.yaml` (description <= 25 words, <= 6 examples, at most one `prompt_example: true`; set `destructive_when` + `target_params` for anything irreversible).
-2. Write a `ManifestSkill` subclass (`run()` only), register it in `server.py`.
+2. Write a `ManifestSkill` subclass (`run()` only), register it in `bootstrap/container.py`.
 3. Add cases to `tests/eval/orchestrator_golden.yaml`; never tune against `orchestrator_heldout.yaml`. Measure with `python scripts/spike_decision_protocol.py --variants A5`.
 4. The static control prompt grows with every tool (~100 tokens each with its example): check `PromptBudgets.control` still leaves >= 400 tokens (a test enforces it).
 

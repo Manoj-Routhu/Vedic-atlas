@@ -8,7 +8,7 @@ Donor: veda/brain/conversation.py, read in full and adapted:
     This is a fresh product with no such legacy file to import.
   - Depends on ConversationRepositoryPort (Batch 3) rather than
     constructing a concrete `ConversationRepository` itself — the donor's
-    `init_db()` call and direct repo construction move to server.py's
+    `init_db()` call and direct repo construction move to bootstrap/container.py's
     composition step.
   - `add_turn` / `turns` / `get_context_summary` kept with identical
     external shape so agents built against this class don't need edits

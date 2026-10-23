@@ -1,6 +1,6 @@
 """LookupHealthService — probes each online tool dependency with a known query.
 
-Each probe is a small async callable composed in server.py (the composition
+Each probe is a small async callable composed in bootstrap/builders/lookup.py (the composition
 root), so this service knows nothing about weather, Tavily, or HTTP. A probe
 returns a short human-readable sample on success and raises on failure.
 A probe whose secret is missing is reported as "not configured" without

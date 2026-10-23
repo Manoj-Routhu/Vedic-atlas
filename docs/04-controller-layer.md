@@ -2,7 +2,7 @@
 
 `src/controller/` is the HTTP/terminal boundary: FastAPI routes, SSE
 streaming plumbing, request middleware, dependency providers, and a
-separate terminal CLI client. `src/server.py` — the composition root that
+separate terminal CLI client. `src/bootstrap/` — the composition root that
 wires every adapter and boots the FastAPI app — is covered at the end of
 this document since it's the thing that makes the controller layer
 runnable.
@@ -54,7 +54,7 @@ async def request_context(request: Request, call_next):
     return await call_next(request)
 ```
 
-Registered via `app.middleware("http")(request_context)` in `server.py`.
+Registered via `app.middleware("http")(request_context)` in `bootstrap/app.py`.
 Generates an 8-character hex ID per request and pushes it into
 `core.logging_config`'s `ContextVar`, so every log line emitted while
 handling that request carries a consistent ID — this replaces a
@@ -92,7 +92,7 @@ same as any other client would.
   `ensure_up()` makes sure a server answers and says what it did in `client.how`:
   **reused** (already running: left alone), **waited** (an earlier `veda` spawned one that is still loading the model:
   wait for it, never start a second; its pid is kept in `data/veda-server-<port>.pid`), **started** (spawned
-  `python -m uvicorn server:app` with `PYTHONPATH` set to `src/` and Uvicorn access logs disabled) or **restarted**.
+  `python -m uvicorn bootstrap.app:app` with `PYTHONPATH` set to `src/` and Uvicorn access logs disabled) or **restarted**.
   The server answers only after the model is loaded and warmed (about a minute on a laptop, more on a Pi), so the wait is
   240 s (`VEDA_START_TIMEOUT`),
   progress is logged every 15 s, and if the server process dies the last lines of `data/veda-server.log` are shown at once.
@@ -110,7 +110,7 @@ same as any other client would.
   `/yolo on|off`, `/approve`, `/mute`, `/unmute`, `/listen`, `/task`, `/doctor`, `/trace [n]`);
   bare text is sent as chat via `client.stream_chat()`.
 - **`server.py`**: `cmd_server(port, host)` — `veda server` runs
-  `uvicorn.run("server:app", ...)` directly in-process; this one *is* the
+  `uvicorn.run("bootstrap.app:app", ...)` directly in-process; this one *is* the
   FastAPI app, not a client call to it.
 - **`logo.py`** / **`render.py`**: ASCII/rich terminal rendering — a
   status-glyph banner and TTY-aware streaming token output (live update +
@@ -128,35 +128,49 @@ invalid persona/proactivity value) — these bypass the custom
 `AppException` handler and go through FastAPI's native `HTTPException`
 handling instead.
 
-## Composition root (`src/server.py`)
+## Composition root (`src/bootstrap/`)
 
 This is where every `domain/ports/` interface gets a concrete `tpa/`
-adapter and the FastAPI app gets built. `_IS_WINDOWS = platform.system()
-== "Windows"` gates every platform-specific adapter choice throughout.
+adapter and the FastAPI app gets built. It sits above `controller`, `service` and `tpa`; nothing imports it.
+The repo-root `server.py` is only the ASGI entry point (`from bootstrap.app import app`).
 
-### `_build_*` functions
+| Module | Holds |
+|---|---|
+| `bootstrap/app.py` | `app` — the FastAPI instance: exception handlers, middleware, routers, `GET /` |
+| `bootstrap/lifespan.py` | `lifespan(app)` — boot checks, start and stop of every long-running subsystem |
+| `bootstrap/container.py` | `build_app_state(app)` — builds every subsystem and attaches it to `app.state` |
+| `bootstrap/background.py` | memory-index backfill and the hourly housekeeping loop |
+| `bootstrap/builders/*.py` | the `build_*` functions below, one module per family |
 
-| Function | Wires | Selection logic |
-|---|---|---|
-| `_build_system_control()` | `SystemControlPort` | Windows → `WindowsSystemAdapter`, else `LinuxSystemAdapter` |
-| `_build_notifier()` | `NotificationPort` | Windows → `DesktopNotifier`; else `None` |
-| `_build_mute_switch(cfg)` | `MuteSwitchPort` | `privacy.mute_switch`: `software`/`keyboard`/`gpio`/`hid`; any construction/start failure falls back to `SoftwareMuteSwitch` |
-| `_build_indicator()` | `IndicatorPort` | Tries `BlinkStickIndicator`; falls back to `SoftwareIndicator` |
-| `_build_audio_capture(cfg, frame_length=None)` | `AudioCapturePort` | `SoundDeviceCapture`; `None` if `sounddevice` is missing or construction fails |
-| `_build_vad(cfg)` | `VoiceActivityPort` | `audio.vad.engine == "webrtc"` → `WebRtcVadDetector`, else `EnergyVadDetector` (default) |
-| `_build_stt(cfg)` | `STTPort` | `FasterWhisperProvider`; requires the model path to exist if configured — no download |
-| `_build_tts(cfg)` | `TTSPort` | `audio.tts_engine`: `auto` (default) → `pyttsx3` on Windows, `piper` elsewhere; or an explicit `piper` / `pyttsx3`. Every requirement is checked at boot (the `piper` package, the voice file, `pyttsx3` being importable) and a problem is logged as an error with the fix and returns `None`, so voice stops at startup (`not started - missing: tts`) instead of staying silent. `tts_model_path` is resolved from the project root. Explicit `piper` with no voice falls back to `pyttsx3` on Windows only |
-| `_build_wake_word(cfg)` | `WakeWordPort` | Off if disabled; `"hotkey"` → `HotkeyWakeWord`; `"porcupine"` → needs `PORCUPINE_ACCESS_KEY` env var + a keyword path, validates 16kHz |
-| `_build_voice_session(cfg, *, audio, capture_gate, supervisor, event_bus)` | assembles `VoiceSession` | Off if `audio.voice_enabled` is `False`; refuses to start if mic, VAD, STT, TTS, or speaker is missing |
-| `_build_audit_sink(cfg)` | `AuditSinkPort` | `NullAuditSink` unless `governance.enabled` and `governance.audit.backend == "sqlite"` → `SqliteAuditSink` |
-| `_build_inference(cfg, governance)` | `InferencePort` | `build_inference_client(...)` wrapped in `SingleFlight(GracefulDegradation(...))`, hooked to `governance.record_success`/`record_failure` |
-| `_build_embedding(cfg)` | `EmbeddingPort` | Off unless `embedding.enabled` → `OnnxEmbeddingProvider` from `embedding.model_path` (default `data/bge-small-en-v1.5`); a missing model logs "semantic memory is OFF" and returns `None` |
-| `_build_lookup(cfg, tool_manifests)` | — | Builds `AllowListedHttpClient`, registers `WeatherProvider`/`GeocodingProvider`/`FxProvider`/`TavilyProvider` into a `FactProviderRegistry`, returns a `LookupService` (with a `TtlCache` and per-category TTLs from the manifests) plus the Tavily provider (for the health probe) |
-| `_build_lookup_health(lookup, search, key_env)` | — | Probes for `veda doctor` / `GET /lookup/health`: geocoding, weather, currency, web_search (skipped, with a hint, when the API key is missing) |
-| `_build_guardrails(cfg)` | — | Builds `PermissionManager`, `RateLimiter`, `InputValidator`, `OutputValidator`, `AuditLogger`; registers hooks onto a `HookRegistry` |
-| `_build_skills(cfg, hooks)` | — | Registers `TerminalSkill`, `FileOpsSkill` into a `SkillRegistry`, returns `(registry, SkillRunner)` |
+`_IS_WINDOWS = platform.system() == "Windows"` gates the platform-specific adapter choices; it lives in
+`builders/system.py` and `builders/tts.py` (tests patch it there).
 
-### `bootstrap(app)` sequence
+### `build_*` functions (`bootstrap/builders/`)
+
+| Function | Module | Wires | Selection logic |
+|---|---|---|---|
+| `build_system_control()` | `system` | `SystemControlPort` | Windows → `WindowsSystemAdapter`, else `LinuxSystemAdapter` |
+| `build_notifier()` | `system` | `NotificationPort` | Windows → `DesktopNotifier`; else `None` |
+| `build_mute_switch(cfg)` | `audio` | `MuteSwitchPort` | `privacy.mute_switch`: `software`/`keyboard`/`gpio`/`hid`; any construction/start failure falls back to `SoftwareMuteSwitch` |
+| `build_indicator()` | `audio` | `IndicatorPort` | Tries `BlinkStickIndicator`; falls back to `SoftwareIndicator` |
+| `build_audio_capture(cfg, frame_length=None)` | `audio` | `AudioCapturePort` | `SoundDeviceCapture`; `None` if `sounddevice` is missing or construction fails |
+| `build_vad(cfg)` | `audio` | `VoiceActivityPort` | `audio.vad.engine == "webrtc"` → `WebRtcVadDetector`, else `EnergyVadDetector` (default) |
+| `build_stt(cfg)` | `audio` | `STTPort` | `FasterWhisperProvider`; requires the model path to exist if configured — no download |
+| `build_tts(cfg)` | `tts` | `TTSPort` | `audio.tts_engine`: `auto` (default) → `pyttsx3` on Windows, `piper` elsewhere; or an explicit `piper` / `pyttsx3`. Every requirement is checked at boot (the `piper` package, the voice file, `pyttsx3` being importable) and a problem is logged as an error with the fix and returns `None`, so voice stops at startup (`not started - missing: tts`) instead of staying silent. `tts_model_path` is resolved from the project root. Explicit `piper` with no voice falls back to `pyttsx3` on Windows only |
+| `build_wake_word(cfg)` | `audio` | `WakeWordPort` | Off if disabled; `"hotkey"` → `HotkeyWakeWord`; `"porcupine"` → needs `PORCUPINE_ACCESS_KEY` env var + a keyword path, validates 16kHz |
+| `build_voice_session(cfg, *, audio, capture_gate, supervisor, event_bus)` | `voice` | assembles `VoiceSession` | Off if `audio.voice_enabled` is `False`; refuses to start if mic, VAD, STT, TTS, or speaker is missing |
+| `build_audit_sink(cfg)` | `safety` | `AuditSinkPort` | `NullAuditSink` unless `governance.enabled` and `governance.audit.backend == "sqlite"` → `SqliteAuditSink` |
+| `build_inference(cfg, governance)` | `inference` | `InferencePort` | `build_inference_client(...)` wrapped in `SingleFlight(GracefulDegradation(...))`, hooked to `governance.record_success`/`record_failure` |
+| `build_embedding(cfg)` | `inference` | `EmbeddingPort` | Off unless `embedding.enabled` → `OnnxEmbeddingProvider` from `embedding.model_path` (default `data/bge-small-en-v1.5`); a missing model logs "semantic memory is OFF" and returns `None` |
+| `build_lookup(cfg, tool_manifests)` | `lookup` | — | Builds `AllowListedHttpClient`, registers `WeatherProvider`/`GeocodingProvider`/`FxProvider`/`TavilyProvider` into a `FactProviderRegistry`, returns a `LookupService` (with a `TtlCache` and per-category TTLs from the manifests) plus the Tavily provider (for the health probe) |
+| `build_lookup_health(lookup, search, key_env)` | `lookup` | — | Probes for `veda doctor` / `GET /lookup/health`: geocoding, weather, currency, web_search (skipped, with a hint, when the API key is missing) |
+| `build_guardrails(cfg)` | `safety` | — | Builds `PermissionManager`, `RateLimiter`, `InputValidator`, `OutputValidator`, `AuditLogger`; registers hooks onto a `HookRegistry` |
+| `build_skills(cfg, hooks)` | `skills` | — | Registers `TerminalSkill`, `FileOpsSkill` into a `SkillRegistry`, returns `(registry, SkillRunner)` |
+| `build_speaker(cfg)` | `audio` | speaker playback | `SpeakerPlayback`; `None` if unavailable |
+| `build_speaker_id(cfg)` / `build_speaker_enrollment_service(cfg, audio)` | `speaker_id` | speaker recognition | per `audio.speaker_id.backend`; `None` (feature off) on any failure |
+| `build_reminders(cfg, ...)` | `reminders` | `ReminderService` | `None` unless `reminders.enabled` |
+
+### `build_app_state(app)` sequence (`container.py`)
 
 1. Load config → `app.state.full_config`
 2. `EventBus()` → `app.state.event_bus`
@@ -188,13 +202,13 @@ adapter and the FastAPI app gets built. `_IS_WINDOWS = platform.system()
     or drive the indicator." The *same* `audio_capture` instance is shared
     with the voice session — "two independent mic streams would fight
     over the device"
-16. `app.state.voice_session = _build_voice_session(...)`
+16. `app.state.voice_session = build_voice_session(...)`
 17. Log `"Bootstrap: N agents, M skills registered"`
 
-### `lifespan(app)` — startup/shutdown
+### `lifespan(app)` — startup/shutdown (`lifespan.py`)
 
 Startup: load config → configure logging → `ensure_dirs()` → `init_tables()`
-→ `bootstrap(app)` → optionally `verify_ready()`/`warmup()` the inference
+→ `build_app_state(app)` → optionally `verify_ready()`/`warmup()` the inference
 backend (logs an error but does **not** crash boot — deliberately, so the
 failure is loud at boot rather than a confusing 404 on the user's first
 turn) → start `capture_gate` (must happen inside the running event loop,
@@ -206,7 +220,7 @@ Shutdown: stop `voice_session` (awaited) → stop `conversation_summariser`
 (awaited, exceptions swallowed) → stop `capture_gate` → delete every file
 under `TEMP_DIR`.
 
-### App construction
+### App construction (`app.py`)
 
 ```python
 app = FastAPI(title=PROJECT_NAME, version=VERSION, lifespan=lifespan)
@@ -226,16 +240,14 @@ UI, the REST API and the `veda` CLI are the only interfaces.
 
 ### Running it
 
-`src/server.py`'s module-level imports are all top-level package imports
-(`from core.config import ...`, not `from src.core.config import ...`),
-which means **`src/` itself must be on `PYTHONPATH`** — the correct
-invocation is:
+The app is addressed by its full module path, `bootstrap.app:app`, so it starts the same way from any working
+directory as long as `src/` is importable (the editable install does that; otherwise set `PYTHONPATH=src`):
 
 ```bash
-cd src && PYTHONPATH=. python -m uvicorn server:app --reload
-# or, equivalently, from the repo root:
-PYTHONPATH=src python -m uvicorn server:app --app-dir src --reload
+pip install -e .
+python -m uvicorn bootstrap.app:app --reload
+# or the repo-root shim:
+python -m uvicorn server:app --reload
+# or simply:
+veda server
 ```
-
-See `scripts/demo.py`'s own docstring, which documents this exact
-invocation as a prerequisite for running the demo script.

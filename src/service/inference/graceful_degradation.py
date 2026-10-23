@@ -11,7 +11,7 @@ Donor: veda/brain/hybrid.py's HybridClient, read in full and adapted:
     circuit-breaker hooks are kept as OPTIONAL constructor callbacks
     rather than a hard import of a `veda.governance` module — this class
     should not need to know governance exists to be constructed with
-    fakes (AC5). server.py wires the real governance callbacks in later.
+    fakes (AC5). bootstrap/ wires the real governance callbacks in later.
   - The retry-once-before-falling-back behaviour is kept verbatim — it's
     real, useful behaviour, not incidental complexity.
 """

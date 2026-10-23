@@ -20,7 +20,7 @@ substantially adapted:
     bus-connected broker"), this singleton existed ONLY because a Claude
     CLI subprocess (via the MCP permission-prompt tool) couldn't reach
     `app.state`. There is no such subprocess in this build — the broker
-    is constructor-injected from server.py like everything else.
+    is constructor-injected from bootstrap/container.py like everything else.
   - Uses `ApprovalRequest` (domain entity) for the public-facing pending
     list; the `asyncio.Future` needed to actually wait for a decision is
     kept in a private dict here, NOT bolted onto the domain entity (a

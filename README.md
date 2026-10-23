@@ -30,7 +30,9 @@ vedic-atlas/
 ├── data/
 ├── docs/                    # architecture, layer docs, handoff, plans
 ├── scripts/
+├── server.py                # ASGI entry point (uvicorn server:app)
 ├── src/
+│   ├── bootstrap/           # composition root: wires adapters, builds the FastAPI app
 │   ├── controller/          # CLI + REST routes
 │   ├── core/                # config, constants, logging
 │   ├── domain/              # entities, ports, pure policies

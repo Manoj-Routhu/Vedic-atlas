@@ -9,7 +9,7 @@ Donor: veda/governance/factory.py, read in full. Changes:
   - Takes an already-constructed `audit_sink: AuditSinkPort` rather than
     building a concrete SQLite/Null backend itself — keeps this factory
     (service/) from needing to import anything from tpa/. The caller
-    (server.py, Batch 11) decides sqlite vs null and constructs it.
+    (bootstrap/container.py) decides sqlite vs null and constructs it.
   - Returns `None` for "disabled", not a NullProvider object — matching
     the `GovernanceProvider | None` shape already used by
     service/agent/supervisor.py and controller/routes/governance.py. A
