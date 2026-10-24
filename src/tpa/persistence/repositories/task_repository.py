@@ -53,6 +53,11 @@ class SqliteTaskRepository:
             row = s.get(TaskRow, task_id)
             return _to_entity(row) if row is not None else None
 
+    def set_due_at(self, task_id: int, due_at: datetime | None) -> bool:
+        with self._session() as s, s.begin():
+            res = s.execute(update(TaskRow).where(TaskRow.id == task_id).values(due_at=due_at))
+            return res.rowcount > 0
+
     def set_done(self, task_id: int, done: bool = True) -> bool:
         with self._session() as s, s.begin():
             res = s.execute(

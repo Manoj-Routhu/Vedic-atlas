@@ -65,6 +65,13 @@ class AppSectionConfig(BaseModel):
     # ~250 tokens). The persona is re-read on every chat turn, so small CPU devices use the compact one.
     chat_persona: Literal["full", "compact"] = "full"
     log_level: str = "INFO"
+    # docs/12: the model may set `advise` / `also_chat` in its control decision. False = both are ignored and every
+    # turn behaves exactly as before.
+    adaptive_reply: bool = False
+    # docs/12 P7 (needs adaptive_reply too): `also_chat` runs the chat half beside the tool call.
+    mixed_intent: bool = False
+    # docs/12 P8: calls whose permission level is `auto` (lookups) run at the same time; everything else stays serial.
+    parallel_tool_calls: bool = False
 
 
 class InferenceConfig(BaseModel):
@@ -233,6 +240,18 @@ class AudioConfig(BaseModel):
     speaker_id: SpeakerIdConfig = SpeakerIdConfig()
 
 
+class RoomSensorConfig(BaseModel):
+    """sensing.room: the sensor in the user's own room."""
+
+    enabled: bool = False
+    driver: Literal["mock", "dht11"] = "mock"
+    gpio_pin: int = Field(default=4, ge=0)
+    poll_interval_sec: float = Field(default=300.0, gt=0)
+    max_age_sec: float = Field(default=1800.0, gt=0)
+    mock_temperature_c: float = 28.0   # what the mock driver reports (a laptop has no sensor)
+    mock_humidity_pct: float = 55.0
+
+
 class SensingConfig(BaseModel):
     """sensing: section — ambient-dispatch tuning (Supervisor / debounce / rate-limit)."""
 
@@ -240,6 +259,7 @@ class SensingConfig(BaseModel):
     debounce_window_sec: float = 30.0
     rate_limit_max: int = 6
     rate_limit_window_sec: float = 60.0
+    room: RoomSensorConfig = RoomSensorConfig()
 
 
 class RemindersConfig(BaseModel):

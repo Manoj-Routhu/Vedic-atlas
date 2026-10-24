@@ -27,13 +27,23 @@ examples:
     calls: [{tool: tasks, args: {action: add, title: bring vegies}}]
   - user: yeah I bought the milk packets
     calls: [{tool: tasks, args: {action: complete, title: milk packets}}]
-    prompt_example: true
   - user: what are my tasks?
     calls: [{tool: tasks, args: {action: list}}]
   - user: what did I finish?
     calls: [{tool: tasks, args: {action: list, include_done: true}}]
   - user: remove the bank task from my list
     calls: [{tool: tasks, args: {action: delete, title: bank}}]
+  # Timed reminders: the due time is what the offline reminder engine speaks at. due_at is local time. The example that
+  # reaches the prompt carries a bare HH:MM (today, or tomorrow if passed) because a static prompt must hold no dates:
+  # the control prompt is byte-identical every turn and a stale date there would be copied. Full dates stay in the
+  # docs-only examples below, matching the training corpus shape.
+  - user: remind me at 6 in the evening to call the bank
+    calls: [{tool: tasks, args: {action: add, title: call the bank, due_at: "18:00"}}]
+    prompt_example: true
+  - user: remind me tomorrow at 9 to take my medicine
+    calls: [{tool: tasks, args: {action: add, title: take my medicine, due_at: "2026-10-15T09:00"}}]
+  - user: remind me at 12 to get vegetables
+    calls: [{tool: tasks, args: {action: add, title: get vegetables, due_at: "2026-10-14T12:00"}}]
 
 # User text that should be routed to the tasks agent.
 triggers:

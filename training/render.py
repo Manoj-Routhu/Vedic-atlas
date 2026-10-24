@@ -33,7 +33,7 @@ from tpa.filestore.yaml_tool_manifest_store import YamlToolManifestStore  # noqa
 
 from training.sample import Sample  # noqa: E402
 
-CONTROL_BUDGET = 2800   # the qwen3-4b / 1.7b / 0.6b profiles' control budget (n_ctx 3072)
+CONTROL_BUDGET = 3450   # must equal the serving control budget (config/prompting.yaml; the 4B model, n_ctx 4096)
 IM_END = "<|im_end|>"
 
 

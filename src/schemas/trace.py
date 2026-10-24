@@ -34,6 +34,8 @@ class TraceOut(BaseModel):
     slots_inherited: list[str] = []
     needs_live_data: bool | None = None
     clarified: bool = False
+    reply_mode: str = ""
+    also_chat: bool = False
     prefix_cache_hit: bool | None = None
 
 

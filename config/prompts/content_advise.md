@@ -1,0 +1,1 @@
+Answer the QUESTION using ONLY the numbers, names and dates in TOOL RESULT. Copy them exactly. You may draw one short practical conclusion from them, and you must say which fact it is based on. Do not calculate new numbers: no differences, totals or durations. One or two short spoken sentences.

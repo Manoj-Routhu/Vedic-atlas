@@ -1,0 +1,15 @@
+name: get_room_temperature
+agent: system
+description: Temperature and humidity in the user's own room (indoors only, not the weather outside).
+reply_mode: template        # the sentence is built from the sensor snapshot
+permission_level: auto
+returns: value
+allow_advice: true          # "is it too hot in here?" may be answered with a conclusion
+
+examples:
+  - user: how hot is it in here
+    calls: [{tool: get_room_temperature, args: {}}]
+  - user: what's the room temperature
+    calls: [{tool: get_room_temperature, args: {}}]
+  - user: is it too humid inside
+    calls: [{tool: get_room_temperature, args: {}}]

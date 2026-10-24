@@ -12,5 +12,7 @@ class ControlDecision:
     calls: tuple[dict, ...] = ()          # each {"tool": name, "args": {...}}
     needs_live_data: bool | None = None
     clarification: str | None = None
+    advise: bool = False                  # the tool's sentence alone would not answer the question (needs a reasoned reply)
+    also_chat: bool = False               # part of the message needs no tool at all
     valid: bool = True                    # False = the output could not be parsed or the model call failed
     note: str = ""                        # why it is invalid, for the trace

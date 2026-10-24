@@ -154,3 +154,6 @@ class ReminderScheduler:
         fired = self._ledger.fired_keys(now - _LEDGER_LOOKBACK) if self._rules.enabled else set()
         planned = plan(items, now, self._rules, fired) if self._rules.enabled else []
         self._pending = [r for r in planned if not self._announcer.holds(r.key)]
+        nxt = min((r.due_at for r in self._pending), default=None)
+        logger.info(f"[reminders] synced: {len(items)} item(s), {len(self._pending)} pending, next at {nxt:%H:%M:%S}" if nxt else
+                    f"[reminders] synced: {len(items)} item(s), nothing pending")

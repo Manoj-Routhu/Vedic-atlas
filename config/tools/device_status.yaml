@@ -4,6 +4,7 @@ description: Report the device battery level, or the busiest running application
 reply_mode: template
 permission_level: auto
 returns: value
+allow_advice: true          # the model may ask for a reasoned answer ("umbrella?") instead of the readout
 
 params:
   what:

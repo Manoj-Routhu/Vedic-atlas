@@ -18,13 +18,13 @@ model can embellish).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time, timedelta
 
 from core.logging_config import logger
 from domain.entities.agent_context import AgentContext
 from domain.entities.skill_result import SkillResult
 from domain.entities.tool_manifest import ToolManifest
-from domain.policies.calendar_policy import looks_like_calendar_entry
+from domain.policies.calendar_policy import clock, looks_like_calendar_entry
 from service.skills.manifest_skill import ManifestSkill
 from service.tasks.task_service import TaskService
 
@@ -72,13 +72,25 @@ class TasksSkill(ManifestSkill):
             )
         if len(title) > _MAX_TITLE:
             return self._fail(f"title too long (max {_MAX_TITLE} characters)", "That task title is too long.")
-        task, created = self._service.add_unique(
-            title, notes=str(params.get("notes") or ""), due_at=self._parse_due(params.get("due_at"))
-        )
+        due = self._parse_due(params.get("due_at"))
+        task, created = self._service.add_unique(title, notes=str(params.get("notes") or ""), due_at=due)
+        if not created and due is not None and task.due_at != due:
+            # "remind me at 7:40 to X" when X is already on the list: the new time must not be silently dropped.
+            if self._service.set_due_at(task.id, due):
+                logger.info(f"[tasks] #{task.id} reminder time changed to {due:%H:%M}")
+                return self._ok(
+                    f"Updated task #{task.id}: {task.title}, reminder at {due.strftime('%d %b %H:%M')}",
+                    f"Okay, I'll remind you about {task.title} at {clock(due)}.",
+                )
         if not created:
             return self._ok(
                 f"Already on the list as #{task.id}: {task.title}. Nothing added.",
                 f"{task.title} is already on your list.",
+            )
+        if due is not None:
+            return self._ok(
+                f"Added task #{task.id}: {task.title}, reminder at {due.strftime('%d %b %H:%M')}",
+                f"Added {task.title} to your list. I'll remind you at {clock(due)}.",
             )
         return self._ok(f"Added task #{task.id}: {task.title}", f"Added {task.title} to your list.")
 
@@ -166,10 +178,24 @@ class TasksSkill(ManifestSkill):
             return None
 
     @staticmethod
-    def _parse_due(value) -> datetime | None:
-        if not value:
+    def _parse_due(value, now: datetime | None = None) -> datetime | None:
+        """The due time as naive LOCAL time, or None (no reminder). Never raises.
+
+        A full timestamp is local time (a timezone-aware one is converted to local). A bare "HH:MM" means today at that
+        time, or tomorrow if it has already passed. Anything else is logged and means no due time."""
+        text = str(value).strip() if value is not None else ""
+        if not text:
             return None
         try:
-            return datetime.fromisoformat(str(value))
+            parsed = datetime.fromisoformat(text)
+            return parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
         except ValueError:
+            pass
+        try:
+            at = time.fromisoformat(text)
+        except ValueError:
+            logger.warning(f"[tasks] unparseable due_at {text!r}: task added without a reminder")
             return None
+        now = now or datetime.now()
+        due = datetime.combine(now.date(), at.replace(tzinfo=None))
+        return due if due > now else due + timedelta(days=1)

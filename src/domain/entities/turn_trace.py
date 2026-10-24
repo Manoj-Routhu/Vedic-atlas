@@ -31,5 +31,7 @@ class TurnTrace:
     slots_inherited: list[str] = field(default_factory=list)   # arg names filled from session state
     needs_live_data: bool | None = None      # the control decode's flag; None = not a control decode
     clarified: bool = False                  # the reply was a clarification question
+    reply_mode: str = ""                     # "template" | "advise" | "" (not a tool turn); what shaped the reply
+    also_chat: bool = False                  # the model said part of the message needs no tool
     prefix_cache_hit: bool | None = None     # the backend reused the cached prompt prefix; None = unknown
     id: int | None = None

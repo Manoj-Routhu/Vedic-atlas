@@ -25,6 +25,10 @@ class TaskRepositoryPort(Protocol):
         """One task by id, or None."""
         ...
 
+    def set_due_at(self, task_id: int, due_at: datetime | None) -> bool:
+        """Change a task's due time. Returns False if the id doesn't exist."""
+        ...
+
     def set_done(self, task_id: int, done: bool = True) -> bool:
         """Mark a task done/undone. Returns False if the id doesn't exist."""
         ...

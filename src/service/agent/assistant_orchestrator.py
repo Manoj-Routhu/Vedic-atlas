@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from datetime import datetime
 from typing import AsyncIterator, Callable, Mapping, Sequence, Awaitable
 
@@ -24,12 +25,12 @@ from domain.entities.agent_context import AgentContext
 from domain.entities.agent_result import AgentResult
 from domain.entities.control_decision import ControlDecision
 from domain.entities.session_context import SessionContext
-from domain.entities.tool_manifest import RETURNS_DOCUMENT, ToolManifest
+from domain.entities.tool_manifest import REPLY_TEMPLATE, RETURNS_DOCUMENT, ToolManifest
 from domain.entities.turn_trace import TurnTrace
 from domain.policies.dispatch_policy import Resolution, Route, resolve
-from domain.policies.grounding_policy import is_grounded
+from domain.policies.grounding_policy import is_grounded, states_a_measurement
 from domain.policies.reply_policy import (
-    FAILED, NARRATE, SPOKEN, UNCONFIRMED_REPLY, classify_call, failure_text, spoken_text,
+    ADVISE_MODE, FAILED, NARRATE, SPOKEN, UNCONFIRMED_REPLY, classify_call, failure_text, resolve_reply_mode, spoken_text,
 )
 from domain.ports.memory_repository_port import MemoryRepositoryPort
 from domain.ports.trace_repository_port import TraceRepositoryPort
@@ -42,6 +43,7 @@ from service.skills.skill_runner import SkillRunner
 
 _ERROR_REPLY = "Something went wrong on my end. Could you try again?"
 _DOCUMENT_FALLBACK_TOKENS = 60  # about two spoken sentences: all a failed narration of a document may fall back to
+_ADVISE_HEADER = "VERIFIED - quote the numbers, names and dates below exactly; do not alter them:"
 _DECIDED = {
     Route.TOOLS: "tool", Route.CHAT: "chat", Route.CLARIFY: "clarify", Route.REFUSE: "refuse", Route.FAIL_CLOSED: "fail",
 }
@@ -69,6 +71,10 @@ class AssistantOrchestrator(BaseAgent):
         conversation_intent: Callable[[str], Awaitable[float]] | None = None,
         conversation_intent_min: float = 0.82,
         conversation_intent_soft_min: float = 0.76,
+        adaptive_reply: bool = False,
+        mixed_intent: bool = False,
+        parallel_tool_calls: bool = False,
+        room_context: Callable[[], str] | None = None,
     ):
         super().__init__(
             name="assistant", model=model,
@@ -96,13 +102,33 @@ class AssistantOrchestrator(BaseAgent):
         self._conversation_intent = conversation_intent
         self._intent_min = conversation_intent_min
         self._intent_soft_min = conversation_intent_soft_min
+        # docs/12: False = the control decision's `advise` / `also_chat` are ignored entirely.
+        self._adaptive_reply = adaptive_reply
+        self._mixed_intent = adaptive_reply and mixed_intent
+        self._parallel_tool_calls = parallel_tool_calls
+        self._room_context = room_context   # () -> the ROOM line, or "" when there is no fresh reading
 
     @staticmethod
     def _default_grounding(reply: str, results: Sequence[str], user_message: str) -> bool:
+        if not results:
+            # No tool data to check against: general knowledge ("there are 7 continents") is not a claim about tool
+            # data, and the allowed-number pool would otherwise be only the question and today's date.
+            return True
         today = datetime.now().strftime("%A %d %B %Y %H:%M")
         return is_grounded(reply, [*results, user_message, today])
 
     # ---- turn preparation ---------------------------------------------------
+
+    def _add_room_context(self, ctx: AgentContext) -> None:
+        """Append (never assign: the API caller may have set system_context) the room reading for the chat prompt."""
+        if self._room_context is None:
+            return
+        try:
+            line = self._room_context()
+        except Exception as e:   # context is an extra; never let it take the turn down
+            logger.warning(f"[assistant] room context unavailable: {type(e).__name__}")
+            return
+        ctx.system_context = "\n".join(part for part in (ctx.system_context, line) if part)
 
     def _begin(self, ctx: AgentContext) -> None:
         ctx.current_agent = self.name
@@ -120,7 +146,13 @@ class AssistantOrchestrator(BaseAgent):
             state = self._session_state.get(ctx.session_id, ctx.speaker_id)
         active = self._session_state.render_active(state) if (self._session_state and state) else ""
         history = self._conversation.turns if self._conversation is not None else []
+        logger.info(f"[turn] user={ctx.user_message!r} voice={ctx.from_voice}")
         result = await self._decoder.decide(ctx.user_message, history, active)
+        logger.info(
+            f"[control] raw={result.raw!r} -> calls={len(result.decision.calls)} advise={result.decision.advise} "
+            f"also_chat={result.decision.also_chat} needs_live_data={result.decision.needs_live_data} "
+            f"flags: adaptive_reply={self._adaptive_reply} mixed_intent={self._mixed_intent} parallel={self._parallel_tool_calls}"
+        )
         resolution = resolve(result.decision, self._manifests, user_message=ctx.user_message)
         if self._conversation_intent is not None:
             try:
@@ -133,6 +165,8 @@ class AssistantOrchestrator(BaseAgent):
                         logger.info(f"[control] question about the conversation itself (score {score:.2f}): route "
                                     f"{resolution.route.value} -> chat")
                         resolution = Resolution(Route.CHAT)
+                    # The fence: this override may only ever move a turn TO chat, never to a tool route.
+                    assert resolution.route is Route.CHAT, "conversation-intent override produced a non-chat route"
             except Exception as e:   # the check is an extra; never let it take the turn down
                 logger.warning(f"[control] conversation-intent check failed: {type(e).__name__}")
         outcome = TurnOutcome(reply=None)
@@ -151,33 +185,149 @@ class AssistantOrchestrator(BaseAgent):
 
     # ---- execution ----------------------------------------------------------
 
-    async def _run_tools(self, ctx: AgentContext, calls: Sequence[dict], outcome: TurnOutcome) -> str:
+    def _is_auto(self, tool: str) -> bool:
+        """Does this call proceed without asking the user? Read from the skill actually registered (configuration can
+        override a manifest's level); an unknown or unreadable level counts as NOT auto, so it stays serial."""
+        try:
+            registry = getattr(self._skill_runner, "skill_registry", None)
+            level = registry.get(tool).permission_level if registry is not None else self._manifests[tool].permission_level
+            return str(getattr(level, "value", level)) == "auto"
+        except Exception:
+            return False
+
+    async def _execute_calls(self, ctx: AgentContext, calls: Sequence[dict], outcome: TurnOutcome) -> None:
+        """Run the calls. Normally one after another. With parallel_tool_calls, the `auto` ones (lookups) run at the same
+        time and everything else stays serial: the approval broker waits up to 60 s on one user decision, so two
+        approval prompts at once would be unusable, especially by voice. Results are always recorded in CALL order."""
+        auto = [i for i, c in enumerate(calls) if self._is_auto(c["tool"])] if self._parallel_tool_calls else []
+        if len(auto) < 2:
+            for call in calls:
+                outcome.calls.append(await execute_call(self._skill_runner, ctx, call, private=self._manifests[call["tool"]].private))
+            return
+
+        executed: dict[int, "ExecutedCall"] = {}
+        entries: dict[int, list[dict]] = {}   # the skill_results entries each call added, to be put back in call order
+        base = len(ctx.skill_results)
+
+        async def run_isolated(i: int) -> None:   # its own skill_results list: the runner appends on completion
+            own = replace(ctx, skill_results=[])
+            call = calls[i]
+            executed[i] = await execute_call(self._skill_runner, own, call, private=self._manifests[call["tool"]].private)
+            entries[i] = own.skill_results
+
+        await asyncio.gather(*(run_isolated(i) for i in auto))
+        for i, call in enumerate(calls):
+            if i in executed:
+                continue
+            before = len(ctx.skill_results)   # serial: the real context, so approvals and their bookkeeping work as ever
+            executed[i] = await execute_call(self._skill_runner, ctx, call, private=self._manifests[call["tool"]].private)
+            entries[i] = ctx.skill_results[before:]
+        ctx.skill_results[base:] = [e for i in range(len(calls)) for e in entries[i]]
+        outcome.calls.extend(executed[i] for i in range(len(calls)))
+        outcome.notes.append(f"{len(auto)} calls ran in parallel")
+
+    async def _run_tools(
+        self, ctx: AgentContext, calls: Sequence[dict], outcome: TurnOutcome, *, advise: bool = False,
+    ) -> str:
         t0 = time.perf_counter()
-        for call in calls:
-            outcome.calls.append(await execute_call(self._skill_runner, ctx, call, private=self._manifests[call["tool"]].private))
+        await self._execute_calls(ctx, calls, outcome)
         outcome.timings_ms["execute"] = int((time.perf_counter() - t0) * 1000)
 
         t1 = time.perf_counter()
-        reply = await self._assemble_reply(ctx, outcome)
+        reply = await self._assemble_reply(ctx, outcome, advise=advise)
         outcome.timings_ms["reply"] = int((time.perf_counter() - t1) * 1000)
         return reply
 
-    async def _assemble_reply(self, ctx: AgentContext, outcome: TurnOutcome) -> str:
+    def _runs_mixed(self, res: Resolution, outcome: TurnOutcome) -> bool:
+        """`also_chat` runs the chat half beside the tools only when it costs no extra decode and loses no guarantee:
+        - not when `advise` applies: that is one decode over the results, and advice cannot answer free knowledge, so
+          `advise` wins and the chat half is dropped;
+        - not when a called tool needs a narration decode (llm reply mode): that would make three decodes."""
+        if not (self._mixed_intent and res.also_chat):
+            return False
+        manifests = [self._manifests[c["tool"]] for c in res.calls]
+        if res.advise and all(m.allow_advice for m in manifests):
+            outcome.notes.append("also_chat dropped: advise applies")
+            return False
+        if any(m.reply_mode != REPLY_TEMPLATE for m in manifests):
+            outcome.notes.append("also_chat dropped: a tool needs its own narration decode")
+            return False
+        return True
+
+    async def _run_tools_and_chat(self, ctx: AgentContext, res: Resolution, outcome: TurnOutcome) -> str:
+        """The tool calls and the chat half at the same time (the flag asserts they are independent), so the network
+        fetch hides under the chat decode. Three protections, because the chat half starts before any tool result:
+        a ~40-token cap, a prompt line telling it to leave the other part alone, and the verified tool sentence last."""
+        chat_ctx = replace(
+            ctx, metadata={**ctx.metadata, "tool_half_pending": True, "skip_persist": True},
+            agent_chain=list(ctx.agent_chain), skill_results=[],
+        )
+
+        async def chat_half():
+            started = time.perf_counter()
+            try:
+                return await self._responder.execute(chat_ctx)
+            finally:
+                outcome.timings_ms["chat"] = int((time.perf_counter() - started) * 1000)
+
+        tool_reply, chat = await asyncio.gather(
+            self._run_tools(ctx, res.calls, outcome), chat_half(), return_exceptions=True,
+        )
+        if isinstance(tool_reply, BaseException):
+            raise tool_reply
+        chat_text = ""
+        if isinstance(chat, BaseException):
+            logger.warning(f"[assistant] chat half failed, replying with the tool half only: {type(chat).__name__}")
+            outcome.notes.append("chat half failed")
+        else:
+            chat_text = (chat.response or "").strip()
+            if chat_text == UNCONFIRMED_REPLY or states_a_measurement(chat_text):
+                # A claim of an action, or a measurement: the chat half started before the tool result existed, so
+                # either one can only be invented. The verified tool sentence stands alone.
+                logger.warning(f"[tool-guard] chat half of a mixed turn dropped: {chat_text[:160]!r}")
+                outcome.notes.append("chat half dropped")
+                chat_text = ""
+        private = any(self._manifests[c.tool].private for c in outcome.calls)
+        logger.info(f"[mixed] chat half={'<private>' if private else repr(chat_text)} kept={bool(chat_text)}")
+        if chat_text:
+            outcome.reply_mode = "mixed"
+        return " ".join(part for part in (chat_text, tool_reply) if part)
+
+    async def _assemble_reply(self, ctx: AgentContext, outcome: TurnOutcome, *, advise: bool = False) -> str:
         """Template sentences are kept verbatim and never reach the model; only results that need narrating share
-        ONE content decode, spliced in at the position of the first of them."""
+        ONE content decode, spliced in at the position of the first of them.
+
+        ADVISE (the model asked, adaptive_reply is on, and every successful call's tool allows it): all successful
+        results, template sentences included, go into that one decode as the `advise` task. If it fails or is
+        ungrounded the reply is exactly what TEMPLATE would have said."""
         calls = outcome.calls
         kinds = [
             classify_call(ok=c.ok, reply_mode=self._manifests[c.tool].reply_mode, final=c.final) for c in calls
         ]
+        mode = resolve_reply_mode(
+            advise and self._adaptive_reply, [self._manifests[c.tool].allow_advice for c in calls if c.ok],
+        )
         narration: str | None = None
+        task, header = "narrate", ""
+        if mode == ADVISE_MODE:
+            task, header = "advise", _ADVISE_HEADER
+            kinds = [FAILED if k == FAILED else NARRATE for k in kinds]
         to_narrate = [c for c, k in zip(calls, kinds) if k == NARRATE]
         if to_narrate:
-            results = [self._composer.cap_tokens(c.observation, self._manifests[c.tool].max_result_tokens) for c in to_narrate]
+            if mode == ADVISE_MODE:   # each result is already a short spoken sentence; cap it by its manifest as ever
+                results = [self._composer.cap_tokens(spoken_text(c.spoken, c.observation), self._manifests[c.tool].max_result_tokens) for c in to_narrate]
+            else:
+                results = [self._composer.cap_tokens(c.observation, self._manifests[c.tool].max_result_tokens) for c in to_narrate]
             narration = await narrate_with_grounding(
                 client=self._client, composer=self._composer, grounding_check=self._grounding_check, ctx=ctx,
                 results=results, model=self.model, num_predict=self._narrate_num_predict,
-                temperature=self._narrate_temperature, outcome=outcome,
+                temperature=self._narrate_temperature, outcome=outcome, task=task, header=header,
+                private=any(self._manifests[c.tool].private for c in to_narrate),
             )
+            if mode == ADVISE_MODE:
+                outcome.reply_mode = ADVISE_MODE if narration is not None else ""
+                if narration is None:
+                    outcome.notes.append("advise fell back to the tool sentences")
         pieces: list[str] = []
         narration_placed = False
         for c, kind in zip(calls, kinds):
@@ -208,6 +358,27 @@ class AssistantOrchestrator(BaseAgent):
             return UNCONFIRMED_REPLY
         return reply
 
+    async def _tools_reply(self, ctx: AgentContext, res: Resolution, outcome: TurnOutcome) -> str:
+        names = [c["tool"] for c in res.calls]
+        permits = [self._manifests[n].allow_advice for n in names]
+        mixed = self._runs_mixed(res, outcome)
+        logger.info(
+            f"[plan] tools={names} multi_call={len(names) > 1} model_advise={res.advise} tools_allow_advice={permits} "
+            f"-> reply_mode={'advise' if (res.advise and self._adaptive_reply and all(permits)) else 'template'} "
+            f"also_chat={res.also_chat} -> mixed_path={mixed}"
+        )
+        if mixed:
+            return await self._run_tools_and_chat(ctx, res, outcome)
+        return await self._run_tools(ctx, res.calls, outcome, advise=res.advise)
+
+    def _log_reply(self, res: Resolution, outcome: TurnOutcome, reply: str, started: float) -> None:
+        private = any(self._manifests[c.tool].private for c in outcome.calls)
+        logger.info(
+            f"[reply] route={res.route.value} mode={outcome.reply_mode or 'template'} decodes={sorted(k for k in outcome.timings_ms if k in ('control', 'narrate', 'chat'))} "
+            f"timings_ms={outcome.timings_ms} total_ms={int((time.perf_counter() - started) * 1000)} notes={outcome.notes} "
+            f"reply={'<private>' if private else reply[:300]!r}"
+        )
+
     # ---- persistence & trace ------------------------------------------------
 
     def _persist(self, ctx: AgentContext, reply: str) -> None:
@@ -226,6 +397,7 @@ class AssistantOrchestrator(BaseAgent):
     ) -> None:
         if self._traces is None:
             return
+        reply_mode = outcome.reply_mode or ("template" if route is Route.TOOLS else "")
         inherited = sorted({
             k for c in outcome.calls for k, v in c.args.items() if state is not None and state.slots.get(k) == v
         })
@@ -239,7 +411,8 @@ class AssistantOrchestrator(BaseAgent):
                 ],
                 prompt_tokens=outcome.prompt_tokens, timings_ms=outcome.timings_ms, notes=list(outcome.notes),
                 state_used=bool(active), slots_inherited=inherited, needs_live_data=decision.needs_live_data,
-                clarified=route is Route.CLARIFY,
+                clarified=route is Route.CLARIFY, reply_mode=reply_mode,
+                also_chat=self._adaptive_reply and decision.also_chat,
             ))
         except Exception as e:  # tracing must never break a turn
             logger.warning(f"[assistant] trace record failed: {e}")
@@ -265,16 +438,19 @@ class AssistantOrchestrator(BaseAgent):
         try:
             result, res, state, active, outcome = await self._decide(ctx)
             if res.route is Route.CHAT:
+                self._add_room_context(ctx)
                 chat = await self._responder.execute(ctx)
+                logger.info(f"[reply] route=chat room_context={'ROOM' in ctx.system_context} reply={chat.response[:300]!r}")
                 self._record_trace(ctx, res.route, result.decision, outcome, chat.response, started, state, active)
                 chat.delegated_to = self._responder.name
                 return chat
-            reply = await self._run_tools(ctx, res.calls, outcome) if res.route is Route.TOOLS else res.text
+            reply = await self._tools_reply(ctx, res, outcome) if res.route is Route.TOOLS else res.text
         except Exception as e:  # never let an orchestration bug take the turn down
             logger.exception(f"[assistant] turn failed: {e}")
             return AgentResult(agent_name=self.name, response=_ERROR_REPLY)
 
         reply = self._backstop(reply, outcome)
+        self._log_reply(res, outcome, reply, started)
         self._persist(ctx, reply)
         self._write_state(ctx, outcome)
         self._record_trace(ctx, res.route, result.decision, outcome, reply, started, state, active)
@@ -286,11 +462,12 @@ class AssistantOrchestrator(BaseAgent):
         try:
             result, res, state, active, outcome = await self._decide(ctx)
             if res.route is Route.CHAT:
+                self._add_room_context(ctx)
                 async for chunk in self._responder.execute_stream(ctx, cancel_event=cancel_event):
                     yield chunk
                 self._record_trace(ctx, res.route, result.decision, outcome, "", started, state, active)
                 return
-            reply = await self._run_tools(ctx, res.calls, outcome) if res.route is Route.TOOLS else res.text
+            reply = await self._tools_reply(ctx, res, outcome) if res.route is Route.TOOLS else res.text
         except Exception as e:
             logger.exception(f"[assistant] turn failed: {e}")
             yield _ERROR_REPLY
@@ -298,6 +475,7 @@ class AssistantOrchestrator(BaseAgent):
 
         # A tool, clarification, refusal or failure has no model text to stream: the reply exists only now.
         reply = self._backstop(reply, outcome)
+        self._log_reply(res, outcome, reply, started)
         self._persist(ctx, reply)
         self._write_state(ctx, outcome)
         self._record_trace(ctx, res.route, result.decision, outcome, reply, started, state, active)

@@ -23,9 +23,11 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import time
 from pathlib import Path
 from typing import AsyncIterator
 
+from core.logging_config import logger
 from domain.ports.inference_port import InferencePort, InferenceTimeoutError
 
 _THINK_OPEN = "<think>"
@@ -126,7 +128,11 @@ class LlamaCppClient:
             kwargs["response_format"] = {"type": "json_object", "schema": json_schema}
         def _run():
             with self._model_lock:
-                return self._llama.create_chat_completion(**kwargs)
+                self._perf_reset()
+                started = time.perf_counter()
+                result = self._llama.create_chat_completion(**kwargs)
+                self._log_perf(result, started, grammar=json_schema is not None)
+                return result
 
         try:
             result = await asyncio.wait_for(asyncio.to_thread(_run), timeout=timeout or self._timeout)
@@ -134,6 +140,31 @@ class LlamaCppClient:
             raise InferenceTimeoutError(f"llama.cpp request timed out: {exc}") from exc
         content = result["choices"][0]["message"]["content"]
         return self._strip_thinking(content) if not self._think else content
+
+    def _perf_reset(self) -> None:
+        try:
+            import llama_cpp
+            llama_cpp.llama_perf_context_reset(self._llama.ctx)
+        except Exception:
+            pass
+
+    def _log_perf(self, result: dict, started: float, *, grammar: bool) -> None:
+        """One line per call: prompt tokens in total vs actually evaluated (a prefix-cache hit evaluates few), the
+        evaluation speed, the generated tokens and their speed. Diagnostic only; never raises."""
+        try:
+            import llama_cpp
+            perf = llama_cpp.llama_perf_context(self._llama.ctx)
+            usage = result.get("usage", {})
+            cache = getattr(self._llama, "cache", None)
+            logger.info(
+                f"[llm] total_ms={int((time.perf_counter() - started) * 1000)} prompt_tokens={usage.get('prompt_tokens')} "
+                f"evaluated={perf.n_p_eval} in {perf.t_p_eval_ms:.0f}ms reused={perf.n_reused} | generated={usage.get('completion_tokens')} "
+                f"in {perf.t_eval_ms:.0f}ms | grammar={grammar} | cache_entries="
+                f"{len(cache.cache_state) if cache is not None and hasattr(cache, 'cache_state') else '-'} "
+                f"cache_mb={int(cache.cache_size / 1048576) if cache is not None and hasattr(cache, 'cache_size') else '-'}"
+            )
+        except Exception as e:
+            logger.debug(f"[llm] perf unavailable: {e}")
 
     def count_tokens(self, text: str) -> int:
         """Exact token count with this model's own tokenizer (used for prompt budgets)."""

@@ -232,6 +232,7 @@ class VedaClient:
         src_dir = repo_root / "src"
         env = os.environ.copy()
         env["PYTHONPATH"] = str(src_dir) + os.pathsep + env.get("PYTHONPATH", "")
+        env["PYTHONUNBUFFERED"] = "1"   # log lines reach data/veda-server.log as they happen, not in blocks
         host = urlparse(self.server_url).hostname or "127.0.0.1"
         port = str(self._port)
         log_path.parent.mkdir(parents=True, exist_ok=True)

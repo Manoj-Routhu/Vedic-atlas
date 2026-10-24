@@ -4,6 +4,7 @@ description: Current weather for a place; leave place empty for the user's home 
 reply_mode: template        # the tool builds the spoken sentence from the provider's numbers
 permission_level: auto
 requires_online: true
+allow_advice: true          # the model may ask for a reasoned answer ("umbrella?") instead of the readout
 cache_ttl_sec: 600
 hosts: [api.open-meteo.com, geocoding-api.open-meteo.com]
 

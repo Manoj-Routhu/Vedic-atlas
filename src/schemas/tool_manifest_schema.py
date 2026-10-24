@@ -17,7 +17,7 @@ from domain.entities.tool_manifest import (
 )
 
 MAX_DESCRIPTION_WORDS = 25   # a description is paid for in every prompt
-MAX_EXAMPLES = 6
+MAX_EXAMPLES = 8
 
 
 class ToolParamSchema(BaseModel):
@@ -61,6 +61,7 @@ class ToolManifestSchema(BaseModel):
     destructive_when: dict[str, list[str]] = Field(default_factory=dict)
     target_params: list[str] = Field(default_factory=list)
     private: bool = False
+    allow_advice: bool = False
 
     @field_validator("name")
     @classmethod
@@ -139,4 +140,5 @@ class ToolManifestSchema(BaseModel):
             destructive_when=tuple((p, tuple(v)) for p, v in self.destructive_when.items()),
             target_params=tuple(self.target_params),
             private=self.private,
+            allow_advice=self.allow_advice,
         )

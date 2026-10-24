@@ -45,6 +45,8 @@ class Resolution:
     route: Route
     calls: tuple[dict, ...] = ()
     text: str = ""    # the reply for CLARIFY / REFUSE / FAIL_CLOSED
+    advise: bool = False       # carried from the decision for TOOLS only; the route table never reads it
+    also_chat: bool = False
 
 
 def _usable_calls(calls, manifests: Mapping[str, ToolManifest], max_calls: int) -> list[dict]:
@@ -78,7 +80,7 @@ def resolve(
             target_is_explicit(manifests[c["tool"]], c["args"], user_message) for c in calls
         ):
             return Resolution(Route.CLARIFY, text=TARGET_REQUIRED_REPLY)   # a guessed or inherited target never runs
-        return Resolution(Route.TOOLS, calls=tuple(calls))
+        return Resolution(Route.TOOLS, calls=tuple(calls), advise=decision.advise, also_chat=decision.also_chat)
 
     question = (decision.clarification or "").strip()
     if question:

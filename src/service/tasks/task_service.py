@@ -35,6 +35,11 @@ class TaskService:
         self._changed()
         return task
 
+    def set_due_at(self, task_id: int, due_at: datetime | None) -> bool:
+        changed = self._repo.set_due_at(task_id, due_at)
+        self._changed()   # the reminder scheduler re-reads at once, so the new time is the one it waits for
+        return changed
+
     def list(self, *, include_done: bool = False) -> list[Task]:
         return self._repo.list(include_done=include_done)
 

@@ -1,9 +1,9 @@
 # Prompt budgets per stage, in estimated tokens (system + prompt together). The composer trims oldest-first to fit.
 # These are the values of domain/policies/token_budget_policy.py::PromptBudgets, copied verbatim (plus `control`).
-# n_ctx is 4096 in the base config (2048 in the small-model profiles) and the reply needs room too:
+# n_ctx is 4096 in the base config (the 4B model is both router and responder; the 0.6B/1.7B/router profiles are no longer supported) and the reply needs room too:
 # raise with care, then measure (scripts/measure_prompt_budget.py). A missing key falls back to the dataclass default.
 budgets:
-  control: 3000          # the ONE decision per turn: persona + every tool + rules/examples (static, cached ~2300) + ACTIVE/RECENT/USER
+  control: 3450          # the ONE decision per turn: persona + every tool + rules/examples (static, cached ~2300) + ACTIVE/RECENT/USER
   narrate: 500           # data plane: one capped tool result, no tools, no history
   chat: 1500             # plain conversation, no tools
   observation_max: 320   # hard cap on a tool result before it enters any prompt
