@@ -11,7 +11,11 @@ export type SpeechPort = {
   readonly isSpeaking: boolean;
 };
 
-export type MicProblem = 'denied' | 'unavailable' | 'nothing';
+/** `speechPackMissing`: the phone can recognise English on its own, but has not downloaded that offline language yet. */
+export type MicProblem = 'denied' | 'unavailable' | 'nothing' | 'speechPackMissing';
+
+/** What asking the phone to download the offline language led to. */
+export type SpeechPackResult = 'ready' | 'scheduled' | 'dialog';
 
 export type RecognizerListener = {
   /** The words heard so far (changes while the user is still speaking). */
@@ -27,6 +31,8 @@ export type Recognizer = {
   start(listener: RecognizerListener): Promise<void>;
   stop(): void;
   cancel(): void;
+  /** Ask the phone to download the offline language once (needs Wi-Fi; no voice is sent). Absent where it cannot be done. */
+  downloadSpeechPack?(): Promise<SpeechPackResult>;
 };
 
 /** Small physical confirmations (vibration). Never required for the flow to work. */

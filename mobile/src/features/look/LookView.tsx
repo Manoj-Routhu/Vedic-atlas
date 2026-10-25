@@ -138,7 +138,7 @@ export function LookView({ store, preview, canShoot, link, micAvailable = false,
         {s.error && s.photo && !working ? <Button variant="secondary" label="Try again" onPress={() => void s.ask(s.question)} /> : null}
       </ScrollView>
 
-      {s.micMessage ? <Banner tone="warn" message={s.micMessage} onDismiss={() => store.setState({ micMessage: null })} testID="mic-message" /> : null}
+      {s.micMessage ? <Banner tone="warn" message={s.micMessage} action={s.micOffer ? { label: 'Download offline speech', onPress: () => void s.downloadSpeechPack() } : undefined} onDismiss={() => store.setState({ micMessage: null })} testID="mic-message" /> : null}
       {canAsk && typing ? (
         <View style={styles.typeBar}>
           <TextInput

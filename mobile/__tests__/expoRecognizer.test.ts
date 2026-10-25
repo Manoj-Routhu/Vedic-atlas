@@ -15,6 +15,7 @@ jest.mock('expo-speech-recognition', () => ({
     start: jest.fn(),
     stop: jest.fn(),
     abort: jest.fn(),
+    androidTriggerOfflineModelDownload: jest.fn(async () => ({ status: 'download_success', message: '' })),
   },
 }));
 
@@ -40,12 +41,22 @@ describe('problemFromError', () => {
     ['not-allowed', 'denied'],
     ['service-not-allowed', 'denied'],
     ['network', 'unavailable'],
-    ['language-not-supported', 'unavailable'],
+    ['language-not-supported', 'speechPackMissing'],
     ['audio-capture', 'unavailable'],
   ])('%s -> %s', (code, problem) => expect(problemFromError(code)).toBe(problem));
 });
 
 describe('ExpoRecognizer', () => {
+  it.each([
+    ['download_success', 'ready'],
+    ['download_scheduled', 'scheduled'],
+    ['opened_dialog', 'dialog'],
+  ])('downloading the offline English pack: %s -> %s', async (status, result) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('expo-speech-recognition').ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload.mockResolvedValueOnce({ status, message: '' });
+    await expect(new ExpoRecognizer().downloadSpeechPack()).resolves.toBe(result);
+  });
+
   it('an end with no words reports what the speech service did, so a silent failure can be diagnosed', async () => {
     const l = listener();
     await new ExpoRecognizer().start(l);

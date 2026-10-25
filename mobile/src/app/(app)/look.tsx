@@ -16,6 +16,8 @@ import type { ChipStatus } from '@/ui/StatusChip';
 import { colors, font, spacing } from '@/ui/theme';
 
 const KEEP_AWAKE_TAG = 'look';
+/** How long the app may be out of view before Look stops listening and speaking. */
+const LEAVE_GRACE_MS = 1500;
 
 export default function Look() {
   const router = useRouter();
@@ -25,11 +27,21 @@ export default function Look() {
   const working = isWorking(useStore(lookStore, (s) => s.phase));
 
   // Leaving the app mid-answer stops the voice and the request; the text stays and offers to ask again.
+  // A brief blip (the speech service or a system dialog taking focus for a moment) must not close the microphone,
+  // so only leaving for longer counts.
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') lookStore.getState().interrupt();
+      clearTimeout(timer);
+      if (state === 'active') return;
+      timer = setTimeout(() => {
+        if (AppState.currentState !== 'active') lookStore.getState().interrupt('the app went to the background');
+      }, LEAVE_GRACE_MS);
     });
-    return () => sub.remove();
+    return () => {
+      clearTimeout(timer);
+      sub.remove();
+    };
   }, []);
 
   // The screen stays on while a photo is being described.
@@ -42,7 +54,7 @@ export default function Look() {
   // Screens under Home or Settings stay mounted, so this one must let go of the camera and the voice when it is left.
   const focused = useIsFocused();
   useEffect(() => {
-    if (!focused) lookStore.getState().interrupt();
+    if (!focused) lookStore.getState().interrupt('you left the Look screen');
   }, [focused]);
 
   const granted = permission?.granted === true;

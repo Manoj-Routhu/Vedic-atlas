@@ -34,6 +34,8 @@ export type LookState = {
   listening: boolean;
   /** What was heard so far, shown as the question chip. */
   heard: string;
+  /** The mic message can be fixed by downloading the phone's offline speech: show that button. */
+  micOffer: boolean;
   /** Why the last question by voice did not work, in plain words. */
   micMessage: string | null;
 };
@@ -42,6 +44,7 @@ export const MIC_MESSAGES: Record<MicProblem, string> = {
   denied: 'Allow the microphone in Settings to ask questions by voice.',
   unavailable: "This phone can't turn speech into text right now. You can type your question.",
   nothing: "I didn't catch that. Hold the button, speak, then let go.",
+  speechPackMissing: "This phone hasn't downloaded its offline English speech yet. Download it once over Wi-Fi. Your voice is never sent anywhere.",
 };
 
 export type LookActions = {
@@ -63,8 +66,10 @@ export type LookActions = {
   finishListening(): void;
   /** Close the microphone without asking. */
   cancelListening(): void;
+  /** Download the offline speech language once, after the phone said it is missing. */
+  downloadSpeechPack(): Promise<void>;
   /** The app went to the background: stop everything, keep the text, offer "Ask again". */
-  interrupt(): void;
+  interrupt(reason?: string): void;
 };
 
 export const isWorking = (phase: Phase) => phase === 'capturing' || phase === 'uploading' || phase === 'looking';
@@ -72,7 +77,7 @@ export const isWorking = (phase: Phase) => phase === 'capturing' || phase === 'u
 const INITIAL: LookState = {
   phase: 'idle', style: 'brief', photo: null, waking: false, slow: false, sentences: [], partial: '', speakingIndex: null,
   done: false, interrupted: false, question: null, error: null, speechUnavailable: false,
-  listening: false, heard: '', micMessage: null,
+  listening: false, heard: '', micOffer: false, micMessage: null,
 };
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -346,7 +351,7 @@ export function createLookStore(deps: LookDeps) {
         if (!recognizer || !photo || isWorking(get().phase) || get().listening) return;
         speech.stop(); // so the phone never hears its own voice
         const run = ++micRun;
-        set({ listening: true, heard: '', micMessage: null });
+        set({ listening: true, heard: '', micMessage: null, micOffer: false });
         const current = () => run === micRun;
         await recognizer.start({
           onPartial: (text) => current() && set({ heard: text }),
@@ -359,8 +364,8 @@ export function createLookStore(deps: LookDeps) {
           },
           onError: (problem, detail) => {
             if (!current()) return;
-            const why = detail ? ` (${detail})` : '';
-            set({ listening: false, heard: '', micMessage: MIC_MESSAGES[problem] + why });
+            const why = detail && problem !== 'speechPackMissing' ? ` (${detail})` : '';
+            set({ listening: false, heard: '', micMessage: MIC_MESSAGES[problem] + why, micOffer: problem === 'speechPackMissing' && Boolean(deps.recognizer?.downloadSpeechPack) });
           },
         });
       },
@@ -369,12 +374,33 @@ export function createLookStore(deps: LookDeps) {
         if (get().listening) deps.recognizer?.stop();
       },
 
+      async downloadSpeechPack() {
+        const download = deps.recognizer?.downloadSpeechPack;
+        if (!download) return;
+        set({ micOffer: false, micMessage: 'Asking your phone to download offline English speech…' });
+        try {
+          const result = await download.call(deps.recognizer);
+          set({
+            micMessage:
+              result === 'ready'
+                ? 'Downloaded. Tap the microphone and ask your question.'
+                : result === 'scheduled'
+                  ? 'The download will finish on Wi-Fi. Try the microphone again in a minute.'
+                  : "Follow your phone's download prompt, then try the microphone again.",
+          });
+        } catch {
+          set({ micMessage: 'Your phone would not start the download. Open the Google app, then Settings, Voice, Offline speech recognition, and download English (US).', micOffer: true });
+        }
+      },
+
       cancelListening() {
         closeMic();
       },
 
-      interrupt() {
+      interrupt(reason) {
+        const wasListening = get().listening;
         closeMic();
+        if (wasListening && reason) set({ micMessage: `The microphone was closed: ${reason}.` });
         if (!isWorking(get().phase)) {
           speech.stop();
           return;

@@ -1,12 +1,13 @@
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 
-import type { MicProblem, Recognizer, RecognizerListener } from '../features/look/ports';
+import type { MicProblem, Recognizer, RecognizerListener, SpeechPackResult } from '../features/look/ports';
 
 type Subscription = { remove(): void };
 
 /** What the Android recognizer calls its failures, in the words the user should get. */
 export function problemFromError(code: string): MicProblem {
   if (code === 'no-speech' || code === 'speech-timeout') return 'nothing';
+  if (code === 'language-not-supported') return 'speechPackMissing';
   if (code === 'not-allowed' || code === 'service-not-allowed') return 'denied';
   return 'unavailable';
 }
@@ -69,6 +70,11 @@ export class ExpoRecognizer implements Recognizer {
       continuous: false,
       requiresOnDeviceRecognition: module.supportsOnDeviceRecognition(),
     });
+  }
+
+  async downloadSpeechPack(): Promise<SpeechPackResult> {
+    const { status } = await ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: 'en-US' });
+    return status === 'download_success' ? 'ready' : status === 'download_scheduled' ? 'scheduled' : 'dialog';
   }
 
   stop(): void {

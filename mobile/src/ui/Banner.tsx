@@ -8,6 +8,8 @@ type Props = {
   message: string;
   /** If given, a "Dismiss" control is shown. */
   onDismiss?: () => void;
+  /** If given, one button that fixes the problem the banner describes. */
+  action?: { label: string; onPress: () => void };
   testID?: string;
 };
 
@@ -17,7 +19,7 @@ const TONES = {
   info: { bg: colors.surface, border: colors.border, fg: colors.textSoft },
 };
 
-export function Banner({ tone, title, message, onDismiss, testID }: Props) {
+export function Banner({ tone, title, message, onDismiss, action, testID }: Props) {
   const t = TONES[tone];
   return (
     <View
@@ -31,6 +33,11 @@ export function Banner({ tone, title, message, onDismiss, testID }: Props) {
         {title ? <Text style={styles.title}>{title}</Text> : null}
         <Text style={[styles.message, { color: t.fg }]}>{message}</Text>
       </View>
+      {action ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={action.label} onPress={action.onPress} style={styles.dismiss}>
+          <Text style={styles.dismissText}>{action.label}</Text>
+        </Pressable>
+      ) : null}
       {onDismiss ? (
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss" onPress={onDismiss} style={styles.dismiss}>
           <Text style={styles.dismissText}>Dismiss</Text>

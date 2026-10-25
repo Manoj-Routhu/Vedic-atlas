@@ -3,7 +3,7 @@ import { Text } from 'react-native';
 
 import { HOLD_MS, LookView } from '../src/features/look/LookView';
 import { createLookStore, MIC_MESSAGES } from '../src/features/look/lookStore';
-import type { MicProblem, Photo, Recognizer, RecognizerListener } from '../src/features/look/ports';
+import type { MicProblem, Photo, Recognizer, RecognizerListener, SpeechPackResult } from '../src/features/look/ports';
 
 /** A recognizer the test drives by hand. */
 class FakeRecognizer implements Recognizer {
@@ -20,6 +20,13 @@ class FakeRecognizer implements Recognizer {
   }
   cancel() {
     this.cancels++;
+  }
+  downloads = 0;
+  downloadResult: SpeechPackResult | Error = 'ready';
+  async downloadSpeechPack() {
+    this.downloads++;
+    if (this.downloadResult instanceof Error) throw this.downloadResult;
+    return this.downloadResult;
   }
 }
 
@@ -60,6 +67,20 @@ describe('asking by voice', () => {
     expect(store.getState().listening).toBe(true);
     recognizer.listener?.onPartial('what does the');
     expect(store.getState().heard).toBe('what does the');
+  });
+
+  it('when the app closes the open microphone it says why, so it is never a silent flicker', async () => {
+    const { store } = await withPhoto();
+    await store.getState().startListening();
+    store.getState().interrupt('the app went to the background');
+    expect(store.getState().listening).toBe(false);
+    expect(store.getState().micMessage).toBe('The microphone was closed: the app went to the background.');
+  });
+
+  it('interrupting when the microphone is not open adds no message', async () => {
+    const { store } = await withPhoto();
+    store.getState().interrupt('you left the Look screen');
+    expect(store.getState().micMessage).toBeNull();
   });
 
   it('letting go asks about the same photo with the words heard', async () => {
@@ -233,6 +254,39 @@ describe('the Look screen with the microphone', () => {
     expect(screen.getByTestId('mic-message')).toHaveTextContent(new RegExp(MIC_MESSAGES.denied));
     await fireEvent.press(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.queryByTestId('mic-message')).toBeNull();
+  });
+
+  it('a missing offline speech pack offers a download button that asks the phone once', async () => {
+    const ctx = setup();
+    await open(ctx);
+    await fireEvent.press(screen.getByRole('button', { name: 'Take a photo' }));
+    await act(async () => {});
+    await fireEvent(screen.getByTestId('mic'), 'pressIn');
+    await act(async () => ctx.recognizer.listener?.onError('speechPackMissing', 'error language-not-supported 80ms'));
+    expect(screen.getByTestId('mic-message')).toHaveTextContent(/hasn't downloaded its offline English speech/);
+    await fireEvent.press(screen.getByRole('button', { name: 'Download offline speech' }));
+    await act(async () => {});
+    expect(ctx.recognizer.downloads).toBe(1);
+    expect(screen.getByTestId('mic-message')).toHaveTextContent(/Downloaded/);
+    expect(screen.queryByRole('button', { name: 'Download offline speech' })).toBeNull();
+  });
+
+  it.each<[SpeechPackResult, RegExp]>([
+    ['scheduled', /finish on Wi-Fi/],
+    ['dialog', /download prompt/],
+  ])('a %s download tells what to do next', async (result, words) => {
+    const { store, recognizer } = await withPhoto();
+    recognizer.downloadResult = result;
+    await store.getState().downloadSpeechPack();
+    expect(store.getState().micMessage).toMatch(words);
+  });
+
+  it('a download the phone refuses explains the manual way and keeps the button', async () => {
+    const { store, recognizer } = await withPhoto();
+    recognizer.downloadResult = new Error('not supported');
+    await store.getState().downloadSpeechPack();
+    expect(store.getState().micMessage).toMatch(/Offline speech recognition/);
+    expect(store.getState().micOffer).toBe(true);
   });
 
   it('a question can be typed instead', async () => {
