@@ -119,8 +119,12 @@ is still to do.
 
 ## More Docs
 
-- [`docs/HANDOFF.md`](docs/HANDOFF.md): setting up on another machine, first-run checklist
+Vision and phone app:
+- [`docs/15-vision-mobile-design.md`](docs/15-vision-mobile-design.md): the Pi side: pairing, access scopes, the vision service and its memory guard
+- [`docs/16-mobile-app-design.md`](docs/16-mobile-app-design.md): the Android app: screens, UX, stages, build notes
+
+Core:
+- [`docs/00-overview.md`](docs/00-overview.md): architecture overview, with the per-layer docs `01` to `06` beside it
 - [`docs/08-tool-harness.md`](docs/08-tool-harness.md): the tool harness
-- [`docs/15-vision-mobile-design.md`](docs/15-vision-mobile-design.md) and
-  [`docs/16-mobile-app-design.md`](docs/16-mobile-app-design.md): vision and phone app design
+- [`docs/HANDOFF.md`](docs/HANDOFF.md): setting up on another machine, first-run checklist
 - [`training/README.md`](training/README.md): router training pipeline
