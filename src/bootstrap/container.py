@@ -179,6 +179,19 @@ def build_app_state(app: FastAPI) -> None:
             logger.error(f"[room] sensor driver {room_cfg.driver!r} unavailable, room feature off: {e}")
     if room_driver is None:   # no sensor: the tool leaves the control prompt entirely
         tool_manifests = {n: m for n, m in tool_manifests.items() if n != "get_room_temperature"}
+    music_on = cfg.music.enabled and cfg.privacy.online.enabled
+    if cfg.music.enabled and not music_on:
+        logger.warning("[music] enabled but privacy.online.enabled is false: music is off")
+    if music_on:
+        from tpa.audio.music_adapters import find_program
+        absent = [f"{label} ({program!r})" for label, program in (("mpv", cfg.music.mpv_path), ("yt-dlp", cfg.music.ytdlp_path))
+                  if find_program(program) is None]
+        if absent:   # music turns itself off, and the tool leaves the prompt, until the setup script (or you) installs them
+            logger.warning(f"[music] off: not found: {', '.join(absent)}. Run scripts/setup_pi.sh (Pi) or scripts/setup_windows.ps1 (Windows), "
+                           "or install them (see config/music.yaml)")
+            music_on = False
+    if not music_on:   # the tool leaves the control prompt entirely
+        tool_manifests = {n: m for n, m in tool_manifests.items() if n != "music_control"}
     app.state.tool_manifests = tool_manifests
     skill_registry.register(TasksSkill(
         service=task_service,
@@ -324,9 +337,25 @@ def build_app_state(app: FastAPI) -> None:
         supervisor=supervisor, event_bus=event_bus, speaker_id=speaker_recognizer,
     )
 
+    app.state.music = None
+    if music_on:
+        from service.music.music_service import MusicService
+        from service.skills.builtin.music import MusicSkill
+        from tpa.audio.music_adapters import MpvPlayer, YtDlpResolver
+        mc = cfg.music
+        voice = app.state.voice_session
+        music = MusicService(
+            YtDlpResolver(mc.ytdlp_path, mc.search_results, mc.search_timeout_sec), MpvPlayer(mc.mpv_path, mc.ytdlp_path),
+            capture_gate, max_seconds=mc.max_minutes * 60, is_busy=voice.is_busy if voice is not None else None,
+        )
+        capture_gate.add_mute_listener(music.on_mute_change)   # the mute switch and /mute /unmute are the guaranteed stop
+        skill_registry.register(MusicSkill(tool_manifests["music_control"], music))
+        app.state.music = music
+        logger.info(f"[music] on: songs play through mpv for at most {mc.max_minutes:g} minute(s); the mic is closed meanwhile")
+
     app.state.reminders = build_reminders(
         cfg, calendar=calendar_port, tasks=task_service, voice_session=app.state.voice_session,
-        calendar_changed=calendar_changed,
+        calendar_changed=calendar_changed, music=app.state.music,
     )
 
     logger.info(f"Bootstrap: {agent_registry.count} agents, {len(skill_registry.list_all())} skills registered")

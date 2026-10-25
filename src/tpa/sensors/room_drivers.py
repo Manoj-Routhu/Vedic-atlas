@@ -39,6 +39,16 @@ class Dht11RoomDriver:
 
 
 def build_room_driver(driver: str, *, gpio_pin: int, mock_temperature_c: float, mock_humidity_pct: float):
+    """`dht11`: the real sensor (an error if its library is missing). `mock`: fixed values. `auto`: the real sensor when
+    its library is installed (a Pi after scripts/setup_pi.sh), otherwise the mock (a laptop)."""
+    if driver == "auto":
+        try:
+            real = Dht11RoomDriver(gpio_pin)
+            logger.info("[room] driver auto: using the DHT11 sensor")
+            return real
+        except Exception as e:
+            logger.info(f"[room] driver auto: no DHT11 here ({type(e).__name__}); using the mock driver")
+            return MockRoomDriver(mock_temperature_c, mock_humidity_pct)
     if driver == "dht11":
         return Dht11RoomDriver(gpio_pin)
     return MockRoomDriver(mock_temperature_c, mock_humidity_pct)

@@ -7,7 +7,7 @@ rate_limit_window_sec: 60.0
 # prompt and the get_room_temperature tool; a reading older than max_age_sec counts as absent.
 room:
   enabled: true           # false removes the tool from the control prompt entirely
-  driver: mock            # mock: the fixed values below (a laptop has no sensor) | dht11: the real sensor on the Pi
+  driver: auto            # auto: the real DHT11 when its library is installed (the Pi after setup_pi.sh), else the mock | mock | dht11
   gpio_pin: 4             # BCM number of the DHT11 data pin (dht11 driver)
   poll_interval_sec: 300
   max_age_sec: 1800

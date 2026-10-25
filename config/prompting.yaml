@@ -3,7 +3,7 @@
 # n_ctx is 4096 in the base config (the 4B model is both router and responder; the 0.6B/1.7B/router profiles are no longer supported) and the reply needs room too:
 # raise with care, then measure (scripts/measure_prompt_budget.py). A missing key falls back to the dataclass default.
 budgets:
-  control: 3450          # the ONE decision per turn: persona + every tool + rules/examples (static, cached ~2300) + ACTIVE/RECENT/USER
+  control: 3550          # the ONE decision per turn: persona + every tool + rules/examples (static, cached ~2300) + ACTIVE/RECENT/USER
   narrate: 500           # data plane: one capped tool result, no tools, no history
   chat: 1500             # plain conversation, no tools
   observation_max: 320   # hard cap on a tool result before it enters any prompt

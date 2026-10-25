@@ -268,8 +268,8 @@ def test_a_decision_without_the_optional_clarification_key_parses():
 # The composer's default counter (estimate_tokens, 3.4 chars/token) deliberately over-counts: the static block measures 2588
 # with it today, against ~2,240 measured with the real tokenizer (training/README.md). docs/12's 2,400-token cap is therefore
 # ~2,750 in this counter's units. Raised to 3,000 when budgets.control went from 3000 to 3450 (+15%, the 4B model is the
-# only supported one) to make room for P3/P5. Now equal to budgets.control - 400 (the room kept for ACTIVE/RECENT/USER).
-STATIC_CONTROL_TOKEN_CAP = 3050
+# only supported one) to make room for P3/P5. Now equal to budgets.control (3550) - 400 (the room kept for ACTIVE/RECENT/USER).
+STATIC_CONTROL_TOKEN_CAP = 3150
 
 
 def test_static_control_prompt_stays_under_the_token_cap():

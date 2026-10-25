@@ -1,0 +1,26 @@
+name: music_control
+agent: system
+description: Play a song by name, or stop the music. Not a web search.
+reply_mode: template        # the reply names the song it chose
+permission_level: auto
+returns: value
+
+params:
+  action:
+    type: string
+    required: true
+    enum: [play, stop]
+  query:
+    type: string
+    description: song name, and the artist if said; only for play
+
+examples:
+  - user: play Tum Hi Ho
+    calls: [{tool: music_control, args: {action: play, query: Tum Hi Ho}}]
+    prompt_example: true
+  - user: play something by Arijit Singh
+    calls: [{tool: music_control, args: {action: play, query: Arijit Singh}}]
+  - user: put on Believer by Imagine Dragons
+    calls: [{tool: music_control, args: {action: play, query: Believer Imagine Dragons}}]
+  - user: stop the music
+    calls: [{tool: music_control, args: {action: stop}}]

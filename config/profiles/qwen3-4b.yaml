@@ -16,4 +16,4 @@ embedding:
   min_score: 0.62
 prompting:
   budgets:
-    control: 3450      # n_ctx 4096 minus the 200-token decision and a margin; history is trimmed first to fit (shallow merge: other budgets keep their defaults)
+    control: 3550      # n_ctx 4096 minus the 200-token decision and a margin; history is trimmed first to fit (shallow merge: other budgets keep their defaults)

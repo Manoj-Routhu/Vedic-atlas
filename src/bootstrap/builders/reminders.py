@@ -21,7 +21,7 @@ def _standalone_speaker(cfg: AppConfig):
     return StandaloneSpeaker(tts, playback)
 
 
-def build_reminders(cfg: AppConfig, *, calendar, tasks, voice_session, calendar_changed):
+def build_reminders(cfg: AppConfig, *, calendar, tasks, voice_session, calendar_changed, music=None):
     """Spoken reminders for calendar events and due tasks. A timer, not an agent: no model, no tools, no prompt. It speaks
     through the voice session only when that is idle, and always leaves the text for the terminal. None when disabled."""
     rc = cfg.reminders
@@ -46,6 +46,9 @@ def build_reminders(cfg: AppConfig, *, calendar, tasks, voice_session, calendar_
         sources.append(TaskReminderSource(tasks))
     ledger, feed = SqliteReminderLedger(), ReminderFeed()
     speaker = voice_session if voice_session is not None else _standalone_speaker(cfg)
+    if music is not None and speaker is not None:   # a reminder pauses the music while it is spoken
+        from service.music.music_service import MusicAwareSpeaker
+        speaker = MusicAwareSpeaker(speaker, music)
     announcer = ReminderAnnouncer(ledger, feed, speaker, rules, idle_settle_sec=rc.idle_settle_sec)
     scheduler = ReminderScheduler(
         sources, ledger, announcer, rules, poll_sec=rc.poll_sec, horizon_hours=rc.horizon_hours, tick_sec=rc.tick_sec,

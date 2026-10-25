@@ -5,12 +5,17 @@
 #   bash scripts/setup_pi.sh                      # everything below
 #   bash scripts/setup_pi.sh --dry-run            # show what it would do, change nothing
 #   bash scripts/setup_pi.sh --extras embedding   # also install an optional extra from pyproject.toml
+#   bash scripts/setup_pi.sh --skip-hardware      # do not install the GPIO / DHT11 libraries
 #   bash scripts/setup_pi.sh --model 1.7b         # pick the language model: 0.6b | 1.7b | 4b (default 4b)
 #
 # What it does (safe to re-run; each step skips work that is already done):
 #   1. checks the machine (CPU, RAM, free disk, Python >= 3.12)
 #   2. installs system packages with apt            (skip: --skip-apt)
 #   3. creates .venv and runs `pip install -e .`    (skip: --skip-install)
+#        - also yt-dlp (music search) is part of `pip install -e .`; mpv (the player) comes from apt in step 2
+#        - on a Raspberry Pi: the GPIO mute switch and DHT11 room-sensor libraries, best effort (skip: --skip-hardware)
+#        - nothing to configure afterwards: Veda turns music on when mpv and yt-dlp are found and uses the DHT11
+#          when its library is installed (config/music.yaml, config/sensing.yaml: driver auto)
 #   4. downloads the models with wget, resumable    (skip: --skip-models)
 #        - language model   data/Qwen3-<size>-Q4_K_M.gguf      (--model: 0.6b ~0.4 GB, 1.7b ~1.1 GB, 4b ~2.5 GB)
 #        - speech-to-text   data/models/whisper-base.en/       (faster-whisper base.en, 145 MB)
@@ -70,12 +75,12 @@ OWW_FEATURE_URL="https://github.com/dscripka/openWakeWord/releases/download/v0.5
 OWW_FEATURE_FILES=(melspectrogram.onnx embedding_model.onnx)
 
 APT_PACKAGES=(build-essential cmake git wget curl ca-certificates pkg-config
-              python3-dev python3-venv libportaudio2 portaudio19-dev alsa-utils)
+              python3-dev python3-venv libportaudio2 portaudio19-dev alsa-utils mpv bluez)
 
 MIN_DISK_GB=8        # llama-cpp-python build + venv + up to 2.7 GB of models
 MIN_RAM_MB=3500      # set per model by select_model() (rough: model file + context + speech/memory models)
 
-DRY_RUN=0 SKIP_APT=0 SKIP_INSTALL=0 SKIP_MODELS=0 SKIP_CONFIG=0 EXTRAS=""
+DRY_RUN=0 SKIP_APT=0 SKIP_INSTALL=0 SKIP_MODELS=0 SKIP_CONFIG=0 SKIP_HARDWARE=0 EXTRAS=""
 
 # ---------------------------------------------------------------- output helpers
 
@@ -271,6 +276,30 @@ setup_venv_and_install() {
   fi
 }
 
+is_raspberry_pi() {
+  [[ -r /proc/device-tree/model ]] && tr -d '\0' < /proc/device-tree/model | grep -qi "raspberry pi"
+}
+
+# GPIO mute switch (rpi-lgpio) and the DHT11 room sensor (adafruit-circuitpython-dht + blinka). Best effort: these are
+# hardware libraries that are not verified on every board, and a failure here must not stop the rest of the setup.
+install_hardware_extras() {
+  step "Hardware libraries (GPIO mute switch, DHT11 room sensor)"
+  if (( SKIP_HARDWARE )); then info "skipped (--skip-hardware)"; return 0; fi
+  if (( SKIP_INSTALL )); then info "skipped (--skip-install)"; return 0; fi
+  if ! is_raspberry_pi && (( ! DRY_RUN )); then info "this is not a Raspberry Pi: skipped (the laptop uses the software mute switch and the mock sensor)"; return 0; fi
+  local pip="$VENV/bin/pip"
+  ( cd "$ROOT" && run "$pip" install --prefer-binary -e ".[hardware-gpio]" ) \
+    || warn "GPIO libraries did not install: the physical mute switch will fall back to the software switch."
+  ( cd "$ROOT" && run "$pip" install --prefer-binary -e ".[hardware-room-sensor]" ) \
+    || warn "DHT11 libraries did not install: the room sensor will stay on the mock driver."
+  # adafruit-blinka can pull in RPi.GPIO, which clashes with rpi-lgpio (the Raspberry Pi 5 replacement for it).
+  if (( ! DRY_RUN )) && "$pip" show RPi.GPIO >/dev/null 2>&1; then
+    info "replacing RPi.GPIO with rpi-lgpio (they provide the same module; only rpi-lgpio works on a Pi 5)"
+    run "$pip" uninstall -y RPi.GPIO || true
+    run "$pip" install --force-reinstall --no-deps "rpi-lgpio>=0.6" || warn "rpi-lgpio did not reinstall."
+  fi
+}
+
 # ---------------------------------------------------------------- 4. models
 
 # Size in bytes the server reports for a URL (follows redirects); empty if unknown.
@@ -430,7 +459,7 @@ import importlib, sys
 checks = {
     "fastapi": "web server", "llama_cpp": "language model", "faster_whisper": "speech-to-text",
     "sounddevice": "microphone/speaker", "openwakeword": "wake word", "piper": "text-to-speech",
-    "onnxruntime": "model runtime", "tokenizers": "text tokenizer (semantic memory)",
+    "onnxruntime": "model runtime", "tokenizers": "text tokenizer (semantic memory)", "yt_dlp": "music search",
 }
 failed = 0
 for module, what in checks.items():
@@ -451,6 +480,11 @@ PY
     ok "the 'veda' command is installed"
   else
     warn "the 'veda' command was not created"
+  fi
+  if command -v mpv >/dev/null 2>&1; then ok "mpv ($(mpv --version 2>/dev/null | head -1 | cut -d' ' -f1-2)): the music player"; else warn "mpv not found: sudo apt install mpv"; fi
+  if is_raspberry_pi; then
+    "$VENV/bin/python" -c 'import RPi.GPIO' >/dev/null 2>&1 && ok "GPIO library (physical mute switch)" || warn "GPIO library missing: the mute switch falls back to software"
+    "$VENV/bin/python" -c 'import adafruit_dht, board' >/dev/null 2>&1 && ok "DHT11 library (room sensor)" || warn "DHT11 library missing: the room sensor stays on the mock driver"
   fi
 }
 
@@ -473,6 +507,12 @@ summary() {
          Set the profile once in $ROOT/.env:   VEDA_PROFILE=$PROFILE
          (or export it in the shell, which wins over .env). Veda logs "[config] profile=..." at startup.
          Without a profile Veda runs the untrimmed base config, which is built for the 4b model.
+      6. music and reminders speak through the speaker. For a Bluetooth speaker, pair it once (it reconnects by itself later):
+             bluetoothctl            then:  scan on  ->  pair <MAC>  ->  trust <MAC>  ->  connect <MAC>  ->  exit
+         and make it the default output (Raspberry Pi OS desktop: the speaker icon). Test:  mpv --no-video <any audio file>
+      7. wiring (pins are BCM numbers, set in config/privacy.yaml and config/sensing.yaml):
+             mute switch   privacy.mute_gpio_pin       (default 17)
+             DHT11 sensor  sensing.room.gpio_pin       (default 4, data pin; 3.3 V and GND for power)
       Check devices if voice is silent:  arecord -l   and   aplay -l
 EOF
 }
@@ -487,6 +527,7 @@ main() {
       --skip-install) SKIP_INSTALL=1 ;;
       --skip-models)  SKIP_MODELS=1 ;;
       --skip-config)  SKIP_CONFIG=1 ;;
+      --skip-hardware) SKIP_HARDWARE=1 ;;
       --extras)       shift; [[ $# -gt 0 ]] || die "--extras needs a value"; EXTRAS="$1" ;;
       --extras=*)     EXTRAS="${1#--extras=}" ;;
       --model)        shift; [[ $# -gt 0 ]] || die "--model needs a value (0.6b, 1.7b or 4b)"; MODEL="$1" ;;
@@ -502,6 +543,7 @@ main() {
   preflight
   install_system_packages
   if (( SKIP_INSTALL )); then step "Python environment"; info "skipped (--skip-install)"; else setup_venv_and_install; fi
+  install_hardware_extras
   download_models
   check_wake_model
   configure_tts

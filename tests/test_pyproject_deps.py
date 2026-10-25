@@ -54,3 +54,32 @@ def test_the_setup_script_installs_openwakeword_without_dependencies_on_linux():
     script = (ROOT / "scripts" / "setup_pi.sh").read_text(encoding="utf-8")
     assert 'pip" install --no-deps --prefer-binary "openwakeword' in script
     assert b"\r" not in (ROOT / "scripts" / "setup_pi.sh").read_bytes()  # CRLF would break the script on Linux
+
+
+# ---- music, reminders and the room sensor install by themselves (docs: README "First-time setup") ----------------------------------
+
+def test_yt_dlp_is_a_normal_dependency_so_pip_install_gets_music_search_everywhere():
+    assert "yt-dlp" in installed_on(PI) and "yt-dlp" in installed_on(WINDOWS)
+
+
+def test_the_pi_setup_installs_the_player_the_bluetooth_tools_and_the_hardware_libraries():
+    script = (ROOT / "scripts" / "setup_pi.sh").read_text(encoding="utf-8")
+    apt = script.split("APT_PACKAGES=(")[1].split(")")[0]
+    assert " mpv" in apt and " bluez" in apt
+    assert '".[hardware-gpio]"' in script and '".[hardware-room-sensor]"' in script
+    assert "uninstall -y RPi.GPIO" in script and "--skip-hardware" in script          # a Pi 5 needs rpi-lgpio, not RPi.GPIO
+    assert "yt_dlp" in script                                                         # verified at the end
+
+
+def test_the_windows_setup_builds_the_fast_model_library_installs_mpv_and_downloads_the_models():
+    script = (ROOT / "scripts" / "setup_windows.ps1").read_text(encoding="utf-8")
+    for needle in ("-DGGML_AVX2=ON", "-DGGML_FMA=ON", "winget", "shinchiro.mpv", "pip", "install", "-e", "Qwen3-4B-Q4_K_M.gguf",
+                   "melspectrogram.onnx", "hey_veda.onnx", ".env.example", "-DryRun"):
+        assert needle in script, needle
+
+
+def test_the_optional_hardware_extras_still_exist_for_the_setup_script_to_install():
+    import tomllib
+    extras = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+    assert {"hardware-gpio", "hardware-room-sensor", "dev"} <= set(extras)
+    assert "music" not in extras                       # yt-dlp moved into the normal dependencies

@@ -153,3 +153,21 @@ def test_port_exceptions_become_a_failed_result_not_a_crash():
         def get_volume(self): raise OSError("audio device gone")
     r = run(VolumeControlSkill(Boom(), VOL), action="get")
     assert not r.success and "couldn't" in r.metadata["spoken"]
+
+
+def test_windows_opens_only_what_exists_so_a_misrouted_request_never_pops_up_an_error(tmp_path, monkeypatch):
+    from tpa.system.windows_system_adapter import WindowsSystemAdapter
+
+    menu = tmp_path / "Programs"
+    menu.mkdir()
+    (menu / "Spotify.lnk").write_text("")
+    (menu / "Some Music Player.lnk").write_text("")
+    started = []
+    adapter = WindowsSystemAdapter()
+    monkeypatch.setattr(WindowsSystemAdapter, "_start_menu_dirs", staticmethod(lambda: [menu]))
+    monkeypatch.setattr("tpa.system.windows_system_adapter.subprocess.Popen", lambda *a, **k: started.append(a))
+    monkeypatch.setattr("tpa.system.windows_system_adapter.shutil.which", lambda n: None)
+    ok, text = adapter.open_app("chikiri")
+    assert ok is False and "couldn't find an app called chikiri" in text and started == []
+    assert adapter.open_app("Some Music Player")[0] is True and len(started) == 1       # a Start Menu shortcut
+    assert adapter.open_app("")[0] is False

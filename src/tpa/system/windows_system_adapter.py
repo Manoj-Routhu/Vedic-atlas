@@ -12,7 +12,10 @@ Donor: veda/system/actions.py, read in full and ported closely:
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import psutil
@@ -65,6 +68,28 @@ class WindowsSystemAdapter:
             return key
         return None
 
+    @staticmethod
+    def _start_menu_dirs() -> list[Path]:
+        roots = (os.environ.get("ProgramData"), os.environ.get("APPDATA"))
+        return [Path(r) / "Microsoft" / "Windows" / "Start Menu" / "Programs" for r in roots if r]
+
+    def _launchable(self, name: str) -> bool:
+        """Is there really something called `name` to start: a program on PATH, a file path, or a Start Menu shortcut?
+        `cmd /c start` on anything else makes Windows pop up a "cannot find" error window on the user's screen."""
+        text = name.strip().strip("'\"")
+        if not text:
+            return False
+        if shutil.which(text) or shutil.which(text + ".exe") or os.path.exists(text):
+            return True
+        wanted = text.lower()
+        for folder in self._start_menu_dirs():
+            try:
+                if any(wanted == p.stem.lower() or wanted in p.stem.lower().split() for p in folder.rglob("*.lnk")):
+                    return True
+            except OSError:
+                continue
+        return False
+
     def _find_running(self, exe_name: str) -> list[psutil.Process]:
         out: list[psutil.Process] = []
         for p in psutil.process_iter(["name"]):
@@ -103,6 +128,8 @@ class WindowsSystemAdapter:
     def open_app(self, name: str) -> tuple[bool, str]:
         exe = self._resolve_app(name)
         if not exe:
+            if not self._launchable(name):
+                return False, f"I couldn't find an app called {name}."
             try:
                 subprocess.Popen(["cmd", "/c", "start", "", name], shell=False)
                 return True, f"Tried to open {name}. Let me know if it didn't show up."

@@ -68,6 +68,10 @@ dependencies = [
     "tokenizers>=0.15",
     "piper-tts>=1.2.0",         # text-to-speech, cross-platform (tts_engine=piper; needs a voice .onnx)
 
+    # --- music (config/music.yaml): yt-dlp finds the song. The player, mpv, is a SYSTEM program, not a pip package:
+    #     scripts/setup_pi.sh installs it with apt, scripts/setup_windows.ps1 with winget.
+    "yt-dlp>=2025.1.1",
+
     # --- Windows only (skipped automatically elsewhere) ---
     "pyttsx3>=2.90; sys_platform == 'win32'",     # Windows SAPI voices (tts_engine=pyttsx3)
     "pywin32>=306; sys_platform == 'win32'",      # active-window info + system control
@@ -90,8 +94,9 @@ wake-porcupine = ["pvporcupine>=3.0.0"]
 
 # Raspberry Pi / hardware peripherals (mute switch, status LED, LCD, USB HID).
 hardware-gpio = ["rpi-lgpio>=0.6; sys_platform == 'linux'", "RPLCD>=1.3.1"]
-# DHT11 room temperature/humidity sensor (Raspberry Pi only; the laptop uses the mock driver). A Pi 5 also needs
-# hardware-gpio's rpi-lgpio. Not verified on hardware yet: confirm these versions on the Pi.
+# DHT11 room temperature/humidity sensor (Raspberry Pi only; the laptop uses the mock driver). scripts/setup_pi.sh installs
+# this and hardware-gpio on a Pi (best effort, and swaps RPi.GPIO for rpi-lgpio, which a Pi 5 needs). Not verified on every
+# board: if the sensor library fails to install the room sensor stays on the mock driver.
 hardware-room-sensor = ["adafruit-circuitpython-dht>=4.0; sys_platform == 'linux'", "adafruit-blinka>=8.0; sys_platform == 'linux'"]
 hardware-hid = ["hidapi>=0.14.0"]
 hardware-blinkstick = ["blinkstick>=1.2.0"]

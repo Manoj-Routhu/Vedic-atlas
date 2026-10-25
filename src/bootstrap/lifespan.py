@@ -99,6 +99,9 @@ async def lifespan(app: FastAPI):
     if getattr(app.state, "google_auth", None) is not None:
         asyncio.create_task(log_google_status(app.state.google_auth))
 
+    if getattr(app.state, "music", None) is not None:
+        app.state.music.start()   # captures the running loop: the mute switch reports from another thread
+
     if getattr(app.state, "room_sensor", None) is not None:
         try:
             app.state.room_sensor.start()
@@ -110,6 +113,12 @@ async def lifespan(app: FastAPI):
         logger.info("[reminders] started")
 
     yield
+
+    if getattr(app.state, "music", None) is not None:
+        try:
+            await app.state.music.shutdown()
+        except Exception as e:
+            logger.warning(f"Music failed to stop cleanly: {e}")
 
     if getattr(app.state, "room_sensor", None) is not None:
         try:
