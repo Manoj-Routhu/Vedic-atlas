@@ -368,8 +368,14 @@ class AssistantOrchestrator(BaseAgent):
             f"also_chat={res.also_chat} -> mixed_path={mixed}"
         )
         if mixed:
-            return await self._run_tools_and_chat(ctx, res, outcome)
-        return await self._run_tools(ctx, res.calls, outcome, advise=res.advise)
+            reply = await self._run_tools_and_chat(ctx, res, outcome)
+        else:
+            reply = await self._run_tools(ctx, res.calls, outcome, advise=res.advise)
+        if res.follow_up:   # a held call or the model's own question: asked AFTER what could be answered
+            logger.info(f"[plan] follow-up question after the tool answer: {res.follow_up!r}")
+            outcome.notes.append("follow-up question asked")
+            reply = f"{reply} {res.follow_up}".strip()
+        return reply
 
     def _log_reply(self, res: Resolution, outcome: TurnOutcome, reply: str, started: float) -> None:
         private = any(self._manifests[c.tool].private for c in outcome.calls)

@@ -4,7 +4,7 @@ Tools:
 <<tools>>
 
 needs_live_data = true ONLY if answering needs information that changes over time, or that is private to this user: weather, prices, exchange rates, news, scores, the user's tasks, email or calendar.
-needs_live_data = false for everything else: maths, definitions, general knowledge, explanations, code, opinions, translation, small talk, anything about this conversation, and facts the user already told you.
+needs_live_data = false for everything else: maths, definitions, general knowledge, facts that do not change (history, science, distances), technical concepts, explanations, code, opinions, translation, small talk, anything about this conversation, and facts the user already told you.
 
 Rules:
 - calls lists the tools to run now. When calls is not empty, needs_live_data is true.
@@ -44,13 +44,13 @@ User: where do you live
 {"needs_live_data":false,"calls":[]}
 User: I hate being asked about the weather all the time
 {"needs_live_data":false,"calls":[]}
-User: tell me about the history of the rupee
+User: who was the first prime minister of India
 {"needs_live_data":false,"calls":[]}
-User: what should I name my new cat
+User: how far is the sun from the earth
 {"needs_live_data":false,"calls":[]}
 User: what is my wife's name
 {"needs_live_data":false,"calls":[]}
-User: explain recursion
+User: what is a JWT token
 {"needs_live_data":false,"calls":[]}
 User: how bad is the traffic to the airport
 {"needs_live_data":true,"calls":[]}

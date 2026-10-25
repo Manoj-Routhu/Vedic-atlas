@@ -6,6 +6,21 @@ from core.logging_config import logger
 from schemas.config_schemas import AppConfig
 
 
+def _standalone_speaker(cfg: AppConfig):
+    """A speaker for reminders when there is no voice loop: the same TTS voice and speaker, no microphone. None (text
+    only) when either is unavailable."""
+    from bootstrap.builders.audio import build_speaker
+    from bootstrap.builders.tts import build_tts
+    from service.reminders.standalone_speaker import StandaloneSpeaker
+
+    tts, playback = build_tts(cfg), build_speaker(cfg)
+    if tts is None or playback is None:
+        logger.warning("[reminders] no voice loop and no usable TTS/speaker: reminders will be text only")
+        return None
+    logger.info("[reminders] voice loop is off: reminders are spoken through the standalone speaker")
+    return StandaloneSpeaker(tts, playback)
+
+
 def build_reminders(cfg: AppConfig, *, calendar, tasks, voice_session, calendar_changed):
     """Spoken reminders for calendar events and due tasks. A timer, not an agent: no model, no tools, no prompt. It speaks
     through the voice session only when that is idle, and always leaves the text for the terminal. None when disabled."""
@@ -30,7 +45,8 @@ def build_reminders(cfg: AppConfig, *, calendar, tasks, voice_session, calendar_
     if rc.include_tasks:
         sources.append(TaskReminderSource(tasks))
     ledger, feed = SqliteReminderLedger(), ReminderFeed()
-    announcer = ReminderAnnouncer(ledger, feed, voice_session, rules, idle_settle_sec=rc.idle_settle_sec)
+    speaker = voice_session if voice_session is not None else _standalone_speaker(cfg)
+    announcer = ReminderAnnouncer(ledger, feed, speaker, rules, idle_settle_sec=rc.idle_settle_sec)
     scheduler = ReminderScheduler(
         sources, ledger, announcer, rules, poll_sec=rc.poll_sec, horizon_hours=rc.horizon_hours, tick_sec=rc.tick_sec,
     )

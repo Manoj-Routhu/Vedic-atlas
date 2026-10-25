@@ -5,6 +5,7 @@ No clock, no I/O, no model: `now` is passed in and every sentence is a template.
 
 Rules in brief
   * A heads-up for each configured lead time, and one at the start. All-day items get none (unless configured).
+    Tasks get ONLY the one at their time, never a heads-up.
   * A heads-up whose time has already passed (the item was created at short notice, or the app was down) is still said
     once, as the NEAREST missed one, with the real time left; never when it is closer than `min_lead_sec` to the start,
     because the start reminder follows at once.
@@ -62,7 +63,8 @@ def plan(items: Sequence[ReminderItem], now: datetime, rules: ReminderRules, fir
             continue
         remaining = (item.start - now).total_seconds()
         missed: list[Reminder] = []
-        for m in leads:
+        # A task is a personal nudge: one reminder, at its time. Heads-ups are for calendar events.
+        for m in ([] if item.source == SOURCE_TASK else leads):
             r = Reminder(reminder_key(item, KIND_LEAD, m), item, KIND_LEAD, m, item.start - timedelta(minutes=m))
             if r.key in fired or remaining <= 0:
                 continue

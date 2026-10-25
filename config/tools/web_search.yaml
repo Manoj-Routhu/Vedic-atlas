@@ -1,6 +1,6 @@
 name: web_search
 agent: lookup
-description: Search the web for current facts, news, scores and prices.
+description: Search the web for news, scores, prices and facts that change over time. Never for facts that stay the same.
 reply_mode: llm             # results are snippets, so a short narrate step phrases them
 permission_level: auto
 returns: document          # snippets go to the narrate step only, never into a control prompt

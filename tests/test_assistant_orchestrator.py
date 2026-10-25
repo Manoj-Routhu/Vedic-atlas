@@ -11,7 +11,7 @@ from domain.entities.agent_context import AgentContext
 from domain.entities.agent_result import AgentResult
 from domain.entities.control_decision import ControlDecision
 from domain.entities.skill_result import SkillResult
-from domain.policies.dispatch_policy import ONE_AT_A_TIME_REPLY, REFUSAL_REPLY, UNPARSEABLE_REPLY
+from domain.policies.dispatch_policy import ONE_AT_A_TIME_REPLY, REFUSAL_REPLY, SEPARATELY_REPLY, UNPARSEABLE_REPLY
 from domain.policies.reply_policy import UNCONFIRMED_REPLY
 from service.agent.assistant_orchestrator import AssistantOrchestrator
 from service.agent.base_agent import BaseAgent
@@ -177,7 +177,17 @@ def test_invalid_decode_fails_closed_instead_of_guessing():
 def test_destructive_call_in_a_multi_call_is_not_executed():
     e = env([dec([call("get_weather", place="Pune"), call("tasks", action="delete", title="bank")])], {"get_weather": WEATHER})
     _, result = turn(e, "weather in Pune and delete the bank task")
-    assert result.response == ONE_AT_A_TIME_REPLY and e.runner.ran == []
+    assert result.response == "In Pune it's 18 degrees. " + SEPARATELY_REPLY    # the weather ran; the delete never did
+    assert e.runner.ran == [("get_weather", {"place": "Pune"})]
+
+
+def test_the_models_own_clarification_is_asked_after_the_tool_answer_and_saved_in_history():
+    decision = ControlDecision(calls=(call("get_weather", place="Pune"),), needs_live_data=True, clarification="Which task do you mean?")
+    e = env([decision], {"get_weather": WEATHER})
+    _, result = turn(e, "weather in Pune and mark it done")
+    assert result.response == "In Pune it's 18 degrees. Which task do you mean?"
+    assert e.convo.added[-1][1] == result.response
+    assert "follow-up question asked" in e.traces.recent(1)[0].notes
 
 
 def test_orchestration_bug_returns_an_error_reply_not_an_exception():

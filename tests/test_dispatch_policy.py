@@ -9,7 +9,7 @@ from domain.entities.conversation import Turn
 from domain.entities.control_decision import ControlDecision
 from domain.policies.claim_guard_policy import SentenceClaimGuard
 from domain.policies.dispatch_policy import (
-    ONE_AT_A_TIME_REPLY, REFUSAL_REPLY, UNPARSEABLE_REPLY, Route, resolve,
+    ONE_AT_A_TIME_REPLY, REFUSAL_REPLY, SEPARATELY_REPLY, UNPARSEABLE_REPLY, Route, resolve,
 )
 from domain.policies.reply_policy import FAILED, NARRATE, SPOKEN, classify_call, failure_text, spoken_text
 from schemas.tool_manifest_schema import ToolManifestSchema
@@ -76,8 +76,24 @@ def test_duplicates_are_removed_and_calls_capped():
 
 
 def test_destructive_call_never_joins_a_multi_call():
-    r = resolve(dec([call("get_weather", place="Pune"), call("tasks", action="delete", title="bank")]), MANIFESTS)
+    # The destructive call is held (it never runs); the harmless one still does and the question follows its answer.
+    weather = call("get_weather", place="Pune")
+    r = resolve(dec([weather, call("tasks", action="delete", title="bank")]), MANIFESTS)
+    assert (r.route, r.calls, r.follow_up) == (Route.TOOLS, (weather,), SEPARATELY_REPLY)
+    # Nothing left to run: the whole turn is one question, as before.
+    r = resolve(dec([call("tasks", action="delete", title="bank"), call("tasks", action="delete", title="milk")]), MANIFESTS)
     assert (r.route, r.text, r.calls) == (Route.CLARIFY, ONE_AT_A_TIME_REPLY, ())
+
+
+def test_a_held_target_and_the_models_own_clarification_are_asked_after_the_runnable_calls():
+    weather = call("get_weather", place="Pune")
+    r = resolve(dec([weather, call("tasks", action="delete", title="bank")]), MANIFESTS, user_message="weather in Pune and delete it")
+    assert (r.route, r.calls, r.follow_up) == (Route.TOOLS, (weather,), SEPARATELY_REPLY)
+    r = resolve(dec([weather, call("tasks", action="complete", title="it")]), MANIFESTS)
+    assert (r.route, r.calls, r.follow_up) == (Route.TOOLS, (weather,), TARGET_REQUIRED_REPLY)
+    r = resolve(ControlDecision(calls=(weather,), needs_live_data=True, clarification="Which task do you mean?"), MANIFESTS)
+    assert (r.route, r.calls, r.follow_up) == (Route.TOOLS, (weather,), "Which task do you mean?")
+    assert resolve(dec([weather]), MANIFESTS).follow_up == ""
 
 
 def test_a_lone_destructive_call_still_runs_it_is_the_approval_hook_that_guards_it():

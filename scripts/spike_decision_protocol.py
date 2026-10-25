@@ -41,7 +41,9 @@ from domain.entities.conversation import Turn  # noqa: E402
 from domain.entities.session_context import SessionContext  # noqa: E402
 from domain.policies.dispatch_policy import Route, resolve  # noqa: E402
 from domain.policies.session_state_policy import active_line  # noqa: E402
-from domain.policies.tool_call_schema import build_control_schema, tool_args_schema  # noqa: E402
+from domain.policies.tool_call_schema import CONTROL_KEYS, build_control_schema, tool_args_schema  # noqa: E402
+
+CALLS_FIRST = ("calls", "needs_live_data", "advise", "also_chat", "clarification")
 from service.prompting.prompt_composer import PromptComposer  # noqa: E402
 from tpa.filestore.file_prompt_store import FilePromptStore  # noqa: E402
 from tpa.filestore.yaml_tool_manifest_store import YamlToolManifestStore  # noqa: E402
@@ -209,7 +211,7 @@ class Runner:
         self.manifest_map = {m.name: m for m in manifests}
         self.persona = composer._prompts.get("persona_lite")
         self.schema_flag_first = build_control_schema(manifests)
-        self.schema_calls_first = build_control_schema(manifests, key_order=("calls", "needs_live_data", "clarification"))
+        self.schema_calls_first = build_control_schema(manifests, key_order=CALLS_FIRST)
         props = {"intent": {"enum": list(INTENTS)}, **self.schema_flag_first["properties"]}
         self.schema_intent = {**self.schema_flag_first, "properties": props, "required": ["intent", *self.schema_flag_first["required"]]}
         self.tools_native = [
@@ -249,7 +251,7 @@ class Runner:
             if state and variant != "A3":
                 active = active_line(SessionContext("s", "", state["tool"], state.get("slots", {}), NOW - timedelta(minutes=3),
                                                     NOW + timedelta(minutes=12)), NOW)
-            order = ("calls", "needs_live_data", "clarification") if variant == "A2" else ("needs_live_data", "calls", "clarification")
+            order = CALLS_FIRST if variant == "A2" else CONTROL_KEYS
             schema = self.schema_calls_first if variant == "A2" else self.schema_flag_first
             p = self.composer.control_stage(case["say"], self._turns(history), active, key_order=order, show_empty=True)
             system = p.system
