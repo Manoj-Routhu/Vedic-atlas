@@ -36,9 +36,7 @@ export function Button({ label, onPress, variant = 'primary', loading = false, d
       onPress={onPress}
       style={({ pressed }) => [
         styles.base,
-        variant === 'primary' && !inactive && styles.glow,
-        { backgroundColor: palette.bg, borderColor: palette.border, opacity: inactive ? 0.55 : pressed ? 0.9 : 1 },
-        pressed && !inactive && { transform: [{ scale: 0.97 }] },
+        { backgroundColor: palette.bg, borderColor: palette.border, opacity: inactive ? 0.55 : pressed ? 0.85 : 1 },
       ]}
     >
       <View style={styles.row}>
@@ -58,7 +56,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  glow: { shadowColor: colors.accent, shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   label: { ...font.button },
 });

@@ -32,10 +32,8 @@ const styles = StyleSheet.create({
     height: 32,
     paddingHorizontal: 14,
     borderRadius: radius.pill,
-    backgroundColor: colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: colors.hairline,
+    backgroundColor: colors.surface,
   },
-  dot: { width: 9, height: 9, borderRadius: 5 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
   label: { ...font.label, color: colors.text },
 });

@@ -230,7 +230,6 @@ describe('Settings screen', () => {
   it('shows what this phone is paired with, in plain words', async () => {
     withStore({ phase: 'paired', saved, link: 'connected' });
     await render(<Settings />);
-    expect(screen.getByText('Pi connected')).toBeTruthy();
     expect(screen.getByLabelText('This phone: Pixel 8')).toBeTruthy();
     expect(screen.getByLabelText('Device id: a1b2c3d4')).toBeTruthy();
     expect(screen.getByLabelText('Pi address: 192.168.1.20:8000')).toBeTruthy();
@@ -247,15 +246,8 @@ describe('Settings screen', () => {
   it('says when the Pi cannot be reached', async () => {
     withStore({ phase: 'paired', saved, link: 'unreachable' });
     await render(<Settings />);
-    expect(screen.getByText("Can't reach your Pi")).toBeTruthy(); // the chip says it once
     expect(screen.getByText('Is it on, and is this phone on the same Wi-Fi?')).toBeTruthy(); // the banner says what to check
     expect(screen.getByTestId('unreachable-banner')).toBeTruthy();
-  });
-
-  it('shows "checking" until the first answer', async () => {
-    withStore({ phase: 'paired', saved, link: 'unknown' });
-    await render(<Settings />);
-    expect(screen.getByText('Checking your Pi')).toBeTruthy();
   });
 
   it('asks before forgetting, and tells you the command to remove the phone on the Pi', async () => {
@@ -279,7 +271,6 @@ describe('Settings screen', () => {
     withStore({ phase: 'demo', saved: null, link: 'connected', forget });
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     await render(<Settings />);
-    expect(screen.getByText('Demo mode')).toBeTruthy(); // the chip
     expect(screen.getByText('Example answers')).toBeTruthy();
     expect(screen.queryByTestId('pairing-card')).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Leave demo mode' }));

@@ -1,4 +1,5 @@
 import { hapticFeedback } from '../../platform/feedback';
+import { ExpoRecognizer } from '../../speech/expoRecognizer';
 import { ExpoSpeaker } from '../../speech/expoSpeaker';
 import { SpeechQueue } from '../../speech/speechQueue';
 import { connectionStore } from '../../state/connection';
@@ -9,6 +10,7 @@ import { createChatStore } from './chatStore';
 export const chatStore = createChatStore({
   getApi: () => connectionStore.getState().api(),
   makeSpeech: () => new SpeechQueue(new ExpoSpeaker('en-US', () => preferencesStore.getState().prefs)),
+  recognizer: new ExpoRecognizer(),
   onApiError: (e) => connectionStore.getState().handleError(e),
   notify: (approvals) => {
     hapticFeedback.capture();

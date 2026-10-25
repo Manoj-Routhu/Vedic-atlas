@@ -12,10 +12,9 @@ async function open(scopes: string[] = ALL, tweak?: (api: DemoApi) => void) {
   const api = new DemoApi();
   tweak?.(api);
   const store = createControlStore({ getApi: () => api as PiApi, scopes: () => scopes });
-  const onBack = jest.fn();
-  const utils = await render(<ControlView store={store} scopes={scopes} link="connected" onBack={onBack} onSettings={jest.fn()} />);
+  const utils = await render(<ControlView store={store} scopes={scopes} link="connected" onSettings={jest.fn()} />);
   await act(async () => store.getState().refresh());
-  return { api, store, onBack, ...utils };
+  return { api, store, ...utils };
 }
 
 describe('ControlView', () => {
@@ -69,12 +68,13 @@ describe('ControlView', () => {
     await act(async () => {});
     expect(screen.queryByText('Call mum')).toBeNull();
     expect(screen.getByText('Buy milk')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Add a task' })); // the field opens on tap
     expect(screen.getByRole('button', { name: 'Add' }).props.accessibilityState.disabled).toBe(true);
     await fireEvent.changeText(screen.getByTestId('new-task'), 'Water plants');
     await fireEvent.press(screen.getByRole('button', { name: 'Add' }));
     await act(async () => {});
     expect(screen.getByText('Water plants')).toBeTruthy();
-    expect(screen.getByTestId('new-task').props.value).toBe('');
+    expect(screen.queryByTestId('new-task')).toBeNull(); // the field closes once the task is added
   });
 
   it('changing the heads-up time: valid input saves, invalid input explains', async () => {
@@ -128,9 +128,8 @@ describe('ControlView', () => {
     expect(screen.getByLabelText('weather, 1.2 s')).toBeTruthy();
   });
 
-  it('has a way back to Home', async () => {
-    const { onBack } = await open();
-    await fireEvent.press(screen.getByRole('button', { name: 'Home' }));
-    expect(onBack).toHaveBeenCalled();
+  it('has the Settings gear', async () => {
+    await open();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy();
   });
 });

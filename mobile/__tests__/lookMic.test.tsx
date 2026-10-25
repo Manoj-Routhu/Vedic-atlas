@@ -189,7 +189,7 @@ describe('hearing one sentence again', () => {
 describe('the Look screen with the microphone', () => {
   const open = (ctx: ReturnType<typeof setup>, micAvailable = true) =>
     render(
-      <LookView store={ctx.store} preview={<Text>live camera</Text>} canShoot link="connected" micAvailable={micAvailable} onBack={jest.fn()} onSettings={jest.fn()} onCopy={jest.fn()} />,
+      <LookView store={ctx.store} preview={<Text>live camera</Text>} canShoot link="connected" micAvailable={micAvailable} onSettings={jest.fn()} onCopy={jest.fn()} />,
     );
 
   it('offers the microphone only once there is a photo', async () => {

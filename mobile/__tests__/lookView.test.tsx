@@ -37,7 +37,7 @@ const open = (store: LookStore, extra: Partial<React.ComponentProps<typeof LookV
       preview={<Text>live camera</Text>}
       canShoot
       link="connected"
-      onBack={jest.fn()}
+     
       onSettings={jest.fn()}
       onCopy={jest.fn()}
       {...extra}
@@ -53,7 +53,7 @@ describe('LookView', () => {
     expect(screen.getByText('live camera')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Take a photo' })).toBeTruthy();
     expect(screen.getByRole('radio', { name: 'Describe', selected: true })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Retake' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Retake' }).props.accessibilityState.disabled).toBe(true); // nothing to retake yet
   });
 
   it('the shutter does nothing while the camera is not allowed', async () => {
@@ -144,5 +144,30 @@ describe('LookView', () => {
     expect(screen.getByText(/can't speak right now/)).toBeTruthy();
     await act(async () => store.setState({ phase: 'answered', sentences: ['Some words.'], done: false, interrupted: true }));
     expect(screen.getByText('Paused when you left the app.')).toBeTruthy();
+  });
+
+  it('while the first photo wakes the model, the photo is covered by "Looking…" and says why it is slow', async () => {
+    const { store } = makeStore(async function* () {
+      await new Promise(() => {});
+      yield { type: 'done' };
+    });
+    await open(store);
+    await act(async () => {
+      void store.getState().capture();
+    });
+    await act(async () => store.setState({ waking: true }));
+    expect(screen.getByText('Looking…')).toBeTruthy();
+    expect(screen.getByText('Waking up the camera model. The first photo takes a little longer.')).toBeTruthy();
+    expect(screen.getByText('Stop')).toBeTruthy(); // under the shutter
+  });
+
+  it('once the answer arrives the controls read "Hold to ask" and "New photo", and Retake is on', async () => {
+    const { store } = makeStore(answer('A red apple. '));
+    await open(store, { micAvailable: true });
+    await fireEvent.press(screen.getByRole('button', { name: 'Take a photo' }));
+    await act(async () => {});
+    expect(screen.getByText('Hold to ask')).toBeTruthy();
+    expect(screen.getByText('New photo')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retake' }).props.accessibilityState.disabled).toBe(false);
   });
 });
