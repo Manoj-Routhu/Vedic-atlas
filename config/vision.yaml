@@ -1,0 +1,32 @@
+# Phone camera -> local vision model -> spoken description (docs/15-vision-mobile-design.md).
+# Off by default. The model runs in its own llama-server process on loopback, loaded on the first photo
+# and stopped after idle_unload_seconds, so it costs no RAM while unused.
+# Per-machine values (binary path, threads, image size) live in config/hardware/<laptop|pi>.yaml, selected
+# with VEDA_DEVICE=laptop|pi (merged after VEDA_PROFILE).
+enabled: true
+
+# llama-server from a pinned llama.cpp build (b11716). Nothing is downloaded automatically.
+binary_path: null
+model_path: data/models/vision/Qwen3VL-2B-Instruct-Q4_K_M.gguf
+mmproj_path: data/models/vision/mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf
+# SHA-256 of the files above, checked before the first start (null = skip the check).
+model_sha256: 089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae
+mmproj_sha256: f9a68fabba69c3b81e153367b2c7521030b0fa8bb0de400c9599c8e6725f9c82
+
+host: 127.0.0.1           # must be a loopback address: the model server is never reachable from the network
+port: 8081
+n_ctx: 4096
+n_threads: null           # null = llama.cpp default; the pi overlay leaves cores for the voice loop
+image_max_tokens: 512     # caps visual tokens; image encoding dominates CPU latency
+startup_timeout_s: 120    # waiting for llama-server to report healthy
+
+image_max_edge_px: 1024   # longer side is scaled down to this before the model sees it
+upload_max_bytes: 1048576 # raw image body cap (a 768 px JPEG is ~150 KB)
+image_cache_max: 3        # photos kept in memory for follow-up questions
+image_cache_ttl_s: 300    # ... and for how long; never written to disk
+
+idle_unload_seconds: 300  # stop the model after this long without a request
+min_headroom_mb: 3000     # refuse to start when less than this is available (protects the main model)
+request_timeout_s: 120
+max_new_tokens: 200
+retain_images: false      # debug only: true would keep photos in data/vision_cache/

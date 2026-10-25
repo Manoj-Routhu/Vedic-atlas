@@ -31,6 +31,7 @@ from rich.console import Console
 from controller.cli.client import CliError, open_client
 from controller.cli.logo import render_banner
 from controller.cli.commands import cmd_approve, cmd_config, cmd_doctor, cmd_listen, cmd_mute, cmd_status, cmd_task, cmd_trace, cmd_unmute
+from controller.cli.pair import cmd_devices, cmd_pair
 from controller.cli.persona import cmd_persona
 from controller.cli.render import stream_to_terminal
 from controller.cli.repl import Repl
@@ -62,7 +63,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_server = sub.add_parser("server", help="Run the FastAPI server.")
     p_server.add_argument("--port", type=int, default=None)
-    p_server.add_argument("--host", default="127.0.0.1")
+    p_server.add_argument("--host", default=None, help="Bind address (default 127.0.0.1)")
+    p_server.add_argument("--lan", action="store_true", help="Listen on the local network (0.0.0.0) so a paired phone can connect")
     p_server.set_defaults(func=_handle_server)
 
     p_persona = sub.add_parser("persona", help="Show or set the active persona.")
@@ -107,6 +109,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_login.add_argument("--port", type=int, default=0, help="loopback port (default: any; 8765 with --manual)")
     p_login.set_defaults(func=_handle_login)
 
+    p_pair = sub.add_parser("pair", help="Pair a phone: print a one-time code (and QR) to enter in the Veda app.")
+    p_pair.add_argument("--allow-approve", action="store_true", help="let this phone approve or deny actions (asks for confirmation here)")
+    p_pair.set_defaults(func=_handle_pair)
+
+    p_devices = sub.add_parser("devices", help="List paired phones, or revoke one: devices revoke <id>.")
+    p_devices.add_argument("action", nargs="?", default="list", help="list | revoke")
+    p_devices.add_argument("device_id", nargs="?", help="id to revoke")
+    p_devices.set_defaults(func=_handle_devices)
+
     p_task = sub.add_parser("task", help="Manage tasks: add <title> | list | done <id>.")
     p_task.add_argument("action", nargs="?", default="list", help="add | list | done")
     p_task.add_argument("rest", nargs="*", help="title (for add) or id (for done)")
@@ -139,7 +150,30 @@ def _handle_hello(args: argparse.Namespace) -> int:
 
 
 def _handle_server(args: argparse.Namespace) -> int:
-    return cmd_server(port=args.port, host=args.host)
+    from core.config import load_full_config
+
+    host = args.host or ("0.0.0.0" if args.lan or load_full_config().devices.lan_enabled else "127.0.0.1")
+    return cmd_server(port=args.port, host=host)
+
+
+def _handle_pair(args: argparse.Namespace) -> int:
+    with open_client(server_url=args.server_url) as client:
+        try:
+            client.ensure_up(allow_spawn=not args.no_spawn)
+        except CliError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        return cmd_pair(client, allow_approve=args.allow_approve)
+
+
+def _handle_devices(args: argparse.Namespace) -> int:
+    with open_client(server_url=args.server_url) as client:
+        try:
+            client.ensure_up(allow_spawn=not args.no_spawn)
+        except CliError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        return cmd_devices(client, args.action, args.device_id)
 
 
 def _handle_persona(args: argparse.Namespace) -> int:
@@ -311,11 +345,20 @@ def _handle_repl(args: argparse.Namespace) -> int:
 
 # ---------- main ----------
 
+def _subcommand_names(parser: argparse.ArgumentParser) -> set[str]:
+    """Every registered subcommand. Anything else on the command line is a chat message, so this must never lag the parser."""
+    names: set[str] = set()
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            names |= set(action.choices)
+    return names
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
 
     raw = list(argv if argv is not None else sys.argv[1:])
-    known_subs = {"hello", "server", "persona", "approve", "config", "status", "mute", "unmute", "listen", "task", "doctor", "trace", "login", "-h", "--help"}
+    known_subs = _subcommand_names(parser) | {"-h", "--help"}
 
     first_pos = next((a for a in raw if not a.startswith("-")), None)
     is_subcommand = first_pos in known_subs if first_pos else False

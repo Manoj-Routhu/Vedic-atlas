@@ -46,7 +46,9 @@ class VedaClient:
 
     def __init__(self, server_url: str | None = None, timeout: float = 30.0) -> None:
         self.server_url = (server_url or _DEFAULT_URL).rstrip("/")
-        self._http = httpx.Client(timeout=timeout)
+        # Only needed when this CLI talks to a Veda server on another machine (loopback needs no token).
+        token = os.environ.get("VEDA_TOKEN", "").strip()
+        self._http = httpx.Client(timeout=timeout, headers={"Authorization": f"Bearer {token}"} if token else None)
         self.how = ""   # what ensure_up did: reused | waited | started | restarted
 
     def close(self) -> None:
@@ -317,6 +319,25 @@ class VedaClient:
         r = self._http.post(f"{self.server_url}/api/persona", json=body)
         r.raise_for_status()
         return r.json()
+
+    # ---------- phone devices (loopback-only routes) ----------
+
+    def create_pairing_code(self, *, allow_approve: bool = False, scopes: list[str] | None = None) -> dict[str, Any]:
+        r = self._http.post(f"{self.server_url}/api/devices/pairing-code", json={"allow_approve": allow_approve, "scopes": scopes})
+        r.raise_for_status()
+        return r.json()
+
+    def list_devices(self) -> list[dict[str, Any]]:
+        r = self._http.get(f"{self.server_url}/api/devices")
+        r.raise_for_status()
+        return r.json()
+
+    def revoke_device(self, device_id: str) -> bool:
+        r = self._http.delete(f"{self.server_url}/api/devices/{device_id}")
+        if r.status_code == 404:
+            return False
+        r.raise_for_status()
+        return True
 
     # ---------- approvals ----------
 

@@ -103,7 +103,19 @@ async def lifespan(app: FastAPI):
         app.state.reminders.start()   # after the voice loop, so its first announcement can already be spoken
         logger.info("[reminders] started")
 
+    if getattr(app.state, "vision", None) is not None:
+        try:
+            await app.state.vision.start()   # does not load the model: that happens on the first photo
+        except Exception as e:
+            logger.warning(f"Vision failed to start: {e}")
+
     yield
+
+    if getattr(app.state, "vision", None) is not None:
+        try:
+            await app.state.vision.stop()   # also stops the model process
+        except Exception as e:
+            logger.warning(f"Vision failed to stop cleanly: {e}")
 
     if getattr(app.state, "reminders", None) is not None:
         try:

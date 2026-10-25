@@ -1,0 +1,78 @@
+{
+  "name": "veda-companion",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
+    "expo": "~58.0.19",
+    "expo-build-properties": "~58.0.11",
+    "expo-camera": "~58.0.12",
+    "expo-clipboard": "~58.0.4",
+    "expo-constants": "~58.0.13",
+    "expo-file-system": "~58.0.11",
+    "expo-haptics": "~58.0.7",
+    "expo-image-manipulator": "~58.0.15",
+    "expo-keep-awake": "~58.0.3",
+    "expo-linking": "~58.0.14",
+    "expo-router": "~58.0.26",
+    "expo-secure-store": "~58.0.2",
+    "expo-speech": "~58.0.3",
+    "expo-speech-recognition": "^58.0.0",
+    "expo-status-bar": "~58.0.4",
+    "expo-system-ui": "~58.0.6",
+    "react": "19.3.0",
+    "react-native": "0.88.0",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-screens": "~4.30.0",
+    "zustand": "^5.0.16"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "^14.1.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.19.2",
+    "@types/react": "~19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~58.0.4",
+    "jest": "~30.5.2",
+    "jest-expo": "~58.0.12",
+    "react-dom": "19.3.0",
+    "test-renderer": "^1.3.1",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p __contract__",
+    "lint": "expo lint",
+    "test": "jest",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "test:unit": "jest --selectProjects unit",
+    "test:contract": "jest --selectProjects contract"
+  },
+  "private": true,
+  "jest": {
+    "projects": [
+      {
+        "displayName": "unit",
+        "preset": "jest-expo",
+        "testMatch": [
+          "<rootDir>/__tests__/**/*.test.ts?(x)"
+        ],
+        "moduleNameMapper": {
+          "^@/(.*)$": "<rootDir>/src/$1"
+        }
+      },
+      {
+        "displayName": "contract",
+        "preset": "jest-expo/node",
+        "testMatch": [
+          "<rootDir>/__contract__/**/*.test.ts"
+        ],
+        "moduleNameMapper": {
+          "^@/(.*)$": "<rootDir>/src/$1"
+        },
+        "testTimeout": 60000
+      }
+    ]
+  }
+}

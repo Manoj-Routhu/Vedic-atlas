@@ -41,6 +41,11 @@ _STATUS_BY_CODE: dict[str, int] = {
     ExceptionCode.APPROVAL_REJECTED: 403,
     ExceptionCode.EGRESS_DENIED: 403,
     ExceptionCode.TOOL_UNAVAILABLE: 503,
+    ExceptionCode.DEVICE_UNAUTHORIZED: 401,
+    ExceptionCode.DEVICE_FORBIDDEN: 403,
+    ExceptionCode.VISION_UNAVAILABLE: 503,
+    ExceptionCode.VISION_BUSY: 429,
+    ExceptionCode.IMAGE_INVALID: 422,
 }
 
 

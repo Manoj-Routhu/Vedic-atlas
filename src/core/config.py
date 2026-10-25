@@ -21,7 +21,7 @@ from schemas.config_schemas import AppConfig
 
 _SECTION_FILES = (
     "app", "inference", "embedding", "audio", "sensing", "reminders", "privacy",
-    "governance", "guardrails", "agents", "prompting", "skills",
+    "governance", "guardrails", "agents", "prompting", "skills", "devices", "vision",
 )
 
 _full_config_cache: AppConfig | None = None
@@ -64,6 +64,27 @@ def _profile_overlay() -> dict:
     return _read_yaml(path)
 
 
+def active_device() -> str:
+    """The machine class from VEDA_DEVICE (`laptop`, `pi`), or "" for none. Same lookup rules as VEDA_PROFILE."""
+    load_env()
+    return os.environ.get("VEDA_DEVICE", "").strip()
+
+
+def _hardware_overlay() -> dict:
+    """Per-machine settings (threads, paths, image size) kept apart from the per-model profile.
+
+    `VEDA_DEVICE=pi` merges config/hardware/pi.yaml (top-level keys are section names) AFTER the profile,
+    so one model profile works on every machine; unset means no hardware overlay.
+    """
+    device = active_device()
+    if not device:
+        return {}
+    path = CONFIG_DIR / "hardware" / f"{device}.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"VEDA_DEVICE={device!r} but {path} does not exist")
+    return _read_yaml(path)
+
+
 def load_full_config() -> AppConfig:
     """Load the complete multi-section config from config/*.yaml.
 
@@ -75,8 +96,9 @@ def load_full_config() -> AppConfig:
         return _full_config_cache
 
     raw = {name: _read_section(name) for name in _SECTION_FILES}
-    for name, overrides in _profile_overlay().items():
-        raw[name] = {**raw.get(name, {}), **(overrides or {})}
+    for overlay in (_profile_overlay(), _hardware_overlay()):
+        for name, overrides in overlay.items():
+            raw[name] = {**raw.get(name, {}), **(overrides or {})}
     _full_config_cache = AppConfig(**{k: v for k, v in raw.items() if v})
     return _full_config_cache
 

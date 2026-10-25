@@ -1,0 +1,6 @@
+# VEDA_DEVICE=laptop: development machine. Generous limits; never tune timeouts from these numbers.
+vision:
+  binary_path: data/tools/llama-b11716-win-cpu-x64/llama-server.exe
+  n_threads: 6
+  image_max_edge_px: 1024
+  min_headroom_mb: 2000

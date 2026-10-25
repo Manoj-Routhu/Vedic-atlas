@@ -430,6 +430,103 @@ class PromptingConfig(BaseModel):
         return budgets
 
 
+class DevicesConfig(BaseModel):
+    """devices: section - phone pairing and the LAN access gate (docs/15-vision-mobile-design.md section 9)."""
+
+    enabled: bool = True   # False = no phone can ever authenticate; non-loopback requests are all refused
+    lan_enabled: bool = False   # default bind of `veda server` (True = 0.0.0.0). Binding never grants access: tokens do
+    advertise_host: str | None = None   # host/IP put in the pairing QR; None = detect the LAN address
+    pairing_code_ttl_s: int = 120
+    pairing_max_attempts: int = 5   # wrong codes per source address before it is locked out
+    pairing_lock_s: int = 300
+    pairing_global_per_hour: int = 20   # redemption attempts per hour across all addresses
+    default_scopes: list[str] = ["vision", "chat", "control"]
+
+    @field_validator("default_scopes")
+    @classmethod
+    def _known_scopes(cls, v: list[str]) -> list[str]:
+        bad = sorted(set(v) - {"vision", "chat", "control", "approve"})
+        if bad:
+            raise ValueError(f"unknown scope(s) {bad}")
+        return v
+
+    @field_validator("pairing_code_ttl_s", "pairing_max_attempts", "pairing_lock_s", "pairing_global_per_hour")
+    @classmethod
+    def _positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("must be > 0")
+        return v
+
+
+class VisionConfig(BaseModel):
+    """vision: section - phone camera to a local vision model (docs/15-vision-mobile-design.md section 10)."""
+
+    enabled: bool = False
+    binary_path: str | None = None   # llama-server; per machine, set in config/hardware/<device>.yaml
+    model_path: str = "data/models/vision/Qwen3VL-2B-Instruct-Q4_K_M.gguf"
+    mmproj_path: str = "data/models/vision/mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf"
+    model_sha256: str | None = None
+    mmproj_sha256: str | None = None
+    host: str = "127.0.0.1"
+    port: int = 8081
+    n_ctx: int = 4096
+    n_threads: int | None = None
+    image_max_tokens: int = 512
+    startup_timeout_s: int = 120
+    image_max_edge_px: int = 1024
+    upload_max_bytes: int = 1_048_576
+    image_cache_max: int = 3
+    image_cache_ttl_s: int = 300
+    idle_unload_seconds: int = 300
+    min_headroom_mb: int = 3000
+    request_timeout_s: int = 120
+    max_new_tokens: int = 200
+    retain_images: bool = False
+
+    @field_validator("host")
+    @classmethod
+    def _loopback_only(cls, v: str) -> str:
+        import ipaddress
+        try:
+            ok = ipaddress.ip_address(v).is_loopback
+        except ValueError:
+            ok = False   # a hostname could resolve anywhere
+        if not ok:
+            raise ValueError("vision.host must be a loopback IP address (127.0.0.1 or ::1): the model server is never exposed")
+        return v
+
+    @field_validator("port")
+    @classmethod
+    def _valid_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError("must be 1-65535")
+        return v
+
+    @field_validator(
+        "n_ctx", "image_max_tokens", "startup_timeout_s", "image_max_edge_px", "upload_max_bytes", "image_cache_max",
+        "image_cache_ttl_s", "idle_unload_seconds", "request_timeout_s", "max_new_tokens",
+    )
+    @classmethod
+    def _positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("must be > 0")
+        return v
+
+    @field_validator("min_headroom_mb")
+    @classmethod
+    def _non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("must be >= 0")
+        return v
+
+    @field_validator("n_threads")
+    @classmethod
+    def _threads(cls, v: int | None) -> int | None:
+        if v is not None and v < 1:
+            raise ValueError("must be >= 1 (or null for the default)")
+        return v
+
+
 class AppConfig(BaseModel):
     """Complete application configuration combining all sections."""
 
@@ -445,3 +542,5 @@ class AppConfig(BaseModel):
     agents: AgentsConfig = AgentsConfig()
     prompting: PromptingConfig = PromptingConfig()
     skills: SkillsConfig = SkillsConfig()
+    devices: DevicesConfig = DevicesConfig()
+    vision: VisionConfig = VisionConfig()

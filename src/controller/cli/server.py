@@ -7,6 +7,8 @@ Donor: veda/cli/server.py, adapted to the new composition root
 
 from __future__ import annotations
 
+import os
+
 import uvicorn
 
 from core.config import load_full_config
@@ -19,5 +21,8 @@ def cmd_server(*, port: int | None = None, host: str = "127.0.0.1") -> int:
     use_port = port or cfg.app.port
     logger.info(f"{PROJECT_NAME} v{VERSION} - Personal AI Assistant")
     logger.info(f"Starting on http://{host}:{use_port}")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        logger.warning("Listening beyond this machine: only paired phones (`veda pair`) are let in; the API is not open")
+    os.environ["VEDA_BIND_HOST"] = host   # read by /api/devices/pairing-code so `veda pair` can warn when nothing can reach us
     uvicorn.run("bootstrap.app:app", host=host, port=use_port, log_level="warning", reload=False, access_log=False)
     return 0

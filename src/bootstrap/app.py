@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from controller.middleware.device_auth import DeviceAuthMiddleware
 from controller.middleware.request_context import request_context
 from controller.routes import (
-    admin, approval, config as config_route, governance as governance_route,
+    admin, approval, config as config_route, devices as devices_route, governance as governance_route,
     google as google_route, health, knowledge, lookup, persona, privacy, reminders as reminders_route, speakers, stream,
-    tasks as tasks_route, trace as trace_route, voice,
+    tasks as tasks_route, trace as trace_route, vision as vision_route, voice,
 )
 from core.constants import PROJECT_NAME, VERSION
 from core.logging_config import logger
@@ -20,11 +21,12 @@ from bootstrap.lifespan import lifespan
 app = FastAPI(title=PROJECT_NAME, version=VERSION, lifespan=lifespan)
 register_exception_handlers(app)
 app.middleware("http")(request_context)
+app.add_middleware(DeviceAuthMiddleware)   # added last = outermost: gates every request, fail-closed
 logger.info(f"{PROJECT_NAME} v{VERSION} application initialized")
 
 for _mod in (
-    admin, approval, config_route, governance_route,
-    google_route, health, knowledge, lookup, persona, privacy, reminders_route, speakers, stream, tasks_route, trace_route, voice,
+    admin, approval, config_route, devices_route, governance_route,
+    google_route, health, knowledge, lookup, persona, privacy, reminders_route, speakers, stream, tasks_route, trace_route, vision_route, voice,
 ):
     app.include_router(_mod.router, prefix="/api")
 
