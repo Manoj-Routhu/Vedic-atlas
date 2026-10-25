@@ -112,10 +112,11 @@ The Android release build on Windows needs a short build path and JDK 17:
 (the script explains why). The APK is written to `mobile/apk/` and is not committed.
 
 ### Status
-Verified on a real phone over home Wi-Fi: pairing, Look, Chat with approvals, Control and
-Settings. Known open issue: the Look microphone (speech-to-text) closes immediately on the
-devices tried; typed questions work. Measuring RAM with both models loaded on a Pi 5 (8 GB)
-is still to do.
+Verified on a real phone over home Wi-Fi: pairing, Look (including questions by voice),
+Chat with approvals, Control and Settings. Speech-to-text runs on the phone; the first time,
+the phone must download its offline English speech pack once (the app offers a button for it,
+over Wi-Fi; your voice is never sent anywhere). Still to do: the polish stage (visual design,
+TalkBack, tablet widths) and measuring RAM with both models loaded on a Pi 5 (8 GB).
 
 ## More Docs
 

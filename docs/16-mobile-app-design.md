@@ -1,6 +1,6 @@
 # 16 — Veda Mobile App (Android): design and UX
 
-Status: **built through Stage 7 and verified on a real Android phone over home Wi-Fi (pairing, Look, Chat with approvals, Control, Settings). Open: the Look microphone closes immediately on the devices tried (typed questions work). Stage 8 (polish) not started. Not ready for the Play Store.** Companion to `15-vision-mobile-design.md`, which defines the Pi side
+Status: **built through Stage 7 and verified on a real Android phone over home Wi-Fi (pairing, Look, Chat with approvals, Control, Settings). Questions by voice work once the phone has downloaded its offline English speech pack (the app offers a button). Stage 8 (polish) not started. Not ready for the Play Store.** Companion to `15-vision-mobile-design.md`, which defines the Pi side
 (vision backend, pairing, permissions). Everything this app calls already exists and is tested; section 6 lists each
 route and what the app does with each response.
 
@@ -584,11 +584,12 @@ What exists: the whole photo-to-speech loop, tested on the laptop against the mo
 
 Not yet verified on a real phone: camera capture and the rotation of the resized JPEG, text-to-speech voice and gaplessness, `expo/fetch` streaming over Wi-Fi, vibration, keep-awake, the permission card after "Don't ask again", TalkBack. Test these with the new APK.
 
-### 12.5 Stage 5: ask by voice, Home screen (Home and typed questions verified; microphone is an open issue)
+### 12.5 Stage 5: ask by voice, Home screen (done; verified on a phone)
 
 - **Verified on the user's phone after Stage 4:** camera orientation, spoken answers, pairing with the real server over Wi-Fi.
 - **Home screen added** (`(app)/home.tsx`), because the user had no way back from Look. The app opens on Home (Look, Settings); Look has "< Home", Settings has "Back". This replaces the bottom-tabs idea until Chat and Control exist (Stages 6 and 7), at which point they join Home. Look releases the camera and stops the voice whenever it is not the screen in front.
 - **Ask by voice:** with a photo on screen a microphone button appears. Hold, speak, let go: the words appear as a question chip ("Listening..." while open) and are asked about the same photo. Speech to text is on the phone (`speech/expoRecognizer.ts`, English, on-device model when the phone has one). The phone's own voice is silenced before the microphone opens. Permission is asked the first time the button is held. Failures are shown in plain words (microphone not allowed, speech recognition unavailable, nothing heard).
+- **The microphone bug, solved (2026-10-25):** the mic closed instantly on two phones because the phone had not downloaded its offline English speech pack, so the recognizer failed with `language-not-supported`. The app now says so in plain words and shows a "Download offline speech" button (`androidTriggerOfflineModelDownload`, one time, over Wi-Fi; no voice is sent). Along the way the banner got a timed trace of the recognizer's events, a short grace period before a background blip closes the mic, and a reason whenever the app itself closes the mic. Confirmed working on a phone after the download.
 - **Typed fallback:** "Type a question" under the answer. **Tap any sentence** to hear it again.
 - **Screen readers:** the microphone also works as a single activation (TalkBack action) for people who cannot hold a button.
 - **Tests:** `lookMic` (store, screen), `expoRecognizer` (adapter with a mocked native module).
