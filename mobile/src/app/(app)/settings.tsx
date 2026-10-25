@@ -15,7 +15,7 @@ import { Button } from '@/ui/Button';
 import { Chips } from '@/ui/Chips';
 import { PermissionChips } from '@/ui/PermissionChips';
 import { Screen } from '@/ui/Screen';
-import { StatusChip, type ChipStatus } from '@/ui/StatusChip';
+import { Icon } from '@/ui/Icon';
 import { colors, font, radius, spacing, touch } from '@/ui/theme';
 
 const RATES = [
@@ -55,7 +55,6 @@ export default function Settings() {
   const [addressError, setAddressError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const chip: ChipStatus = phase === 'demo' ? 'demo' : link === 'connected' ? 'connected' : link === 'unreachable' ? 'unreachable' : 'checking';
   const paired = phase === 'paired' && saved !== null;
   const version = Constants.expoConfig?.version ?? 'dev';
 
@@ -121,13 +120,16 @@ export default function Settings() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Button variant="text" label="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))} />
-        <StatusChip status={chip} />
-        <Text accessibilityRole="header" style={styles.title}>
-          {phase === 'demo' ? 'Trying Veda' : 'Settings'}
-        </Text>
+        <View style={styles.header}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/look'))} style={styles.back} hitSlop={4}>
+            <Icon name="chevron-left" size={26} color={colors.text} />
+          </Pressable>
+          <Text accessibilityRole="header" style={styles.title}>
+            {phase === 'demo' ? 'Trying Veda' : 'Settings'}
+          </Text>
+        </View>
 
-        {chip === 'unreachable' ? (
+        {link === 'unreachable' ? (
           <Banner tone="danger" message="Is it on, and is this phone on the same Wi-Fi?" testID="unreachable-banner" />
         ) : null}
 
@@ -185,6 +187,15 @@ export default function Settings() {
           </Section>
         ) : null}
 
+        <View style={styles.forget}>
+          <Button variant="danger" label={phase === 'demo' ? 'Leave demo mode' : 'Forget this Pi'} onPress={forget} />
+          {saved && phase !== 'demo' ? (
+            <Text style={styles.forgetNote}>
+              To remove this phone completely, run <Text style={styles.mono}>{`veda devices revoke ${saved.deviceId}`}</Text> on your Pi.
+            </Text>
+          ) : null}
+        </View>
+
         <Section title="Voice">
           <Text style={styles.cardLabel}>Speed</Text>
           <Chips label="Speed" options={RATES} selected={nearest(RATES, prefs.speechRate)} onSelect={(v) => void preferencesStore.getState().update({ speechRate: v })} />
@@ -210,11 +221,14 @@ export default function Settings() {
           </Pressable>
         </Section>
 
-        <Section title="Privacy">
-          <Text style={styles.body}>
+        <View style={styles.privacy}>
+          <Text accessibilityRole="header" style={styles.privacyTitle}>
+            Your photos stay at home
+          </Text>
+          <Text style={styles.privacyBody}>
             Photos go only to your Pi, over your home Wi-Fi, and are described there. This phone does not keep them. Questions you speak are turned into text on this phone.
           </Text>
-        </Section>
+        </View>
 
         <Section title="About">
           <Row label="App version" value={version} />
@@ -222,7 +236,6 @@ export default function Settings() {
           {copied ? <Text style={styles.cardLabel} accessibilityLiveRegion="polite">Copied.</Text> : null}
         </Section>
 
-        <Button variant="danger" label={phase === 'demo' ? 'Leave demo mode' : 'Forget this Pi'} onPress={forget} />
       </ScrollView>
     </Screen>
   );
@@ -230,11 +243,11 @@ export default function Settings() {
 
 function Section({ title, children, testID }: { title: string; children: React.ReactNode; testID?: string }) {
   return (
-    <View style={styles.card} testID={testID}>
+    <View testID={testID} style={styles.section}>
       <Text accessibilityRole="header" style={styles.cardTitle}>
         {title}
       </Text>
-      {children}
+      <View style={styles.card}>{children}</View>
     </View>
   );
 }
@@ -249,11 +262,19 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
 }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxl },
+  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: 20, paddingBottom: spacing.xxl },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: -spacing.sm },
+  back: { width: touch.min, height: touch.min, borderRadius: touch.min / 2, alignItems: 'center', justifyContent: 'center' },
+  section: { gap: 10 },
+  forget: { gap: spacing.sm },
+  forgetNote: { ...font.caption, color: colors.muted, paddingHorizontal: 6 },
+  privacy: { backgroundColor: colors.surface, borderRadius: radius.lg, paddingVertical: spacing.lg, paddingHorizontal: 18, gap: spacing.sm },
+  privacyTitle: { ...font.body, fontWeight: '700', color: colors.text },
+  privacyBody: { fontSize: 15, lineHeight: 23, color: colors.textSoft },
   flex: { flex: 1 },
-  title: { ...font.title, color: colors.text },
-  card: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md },
-  cardTitle: { ...font.heading, color: colors.text },
+  title: { fontSize: 26, lineHeight: 32, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
+  card: { backgroundColor: colors.surface, borderRadius: radius.lg, paddingVertical: spacing.md, paddingHorizontal: 18, gap: spacing.md },
+  cardTitle: { fontSize: 15, lineHeight: 20, fontWeight: '600', color: colors.muted, marginHorizontal: 4 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: spacing.md },
   cardLabel: { ...font.label, color: colors.muted },
   body: { ...font.body, color: colors.textSoft },

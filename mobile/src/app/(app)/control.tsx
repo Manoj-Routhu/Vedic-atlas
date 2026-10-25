@@ -5,8 +5,10 @@ import { AppState } from 'react-native';
 import { controlStore } from '@/features/control/controlRuntime';
 import { ControlView } from '@/features/control/ControlView';
 import { useConnection } from '@/state/connection';
+import { OfflineGate } from '@/ui/OfflineGate';
 import { Screen } from '@/ui/Screen';
 import type { ChipStatus } from '@/ui/StatusChip';
+import { TabBar } from '@/ui/TabBar';
 
 const ALL_SCOPES = ['chat', 'control', 'vision', 'approve'];
 
@@ -37,14 +39,16 @@ export default function Control() {
   const chip: ChipStatus = phase === 'demo' ? 'demo' : link === 'connected' ? 'connected' : link === 'unreachable' ? 'unreachable' : 'checking';
 
   return (
-    <Screen>
-      <ControlView
-        store={controlStore}
-        scopes={phase === 'demo' ? ALL_SCOPES : (saved?.scopes ?? [])}
-        link={chip}
-        onBack={() => (router.canGoBack() ? router.back() : router.replace('/home'))}
-        onSettings={() => router.push('/settings')}
-      />
-    </Screen>
+    <OfflineGate>
+      <Screen edges={['top']}>
+        <ControlView
+          store={controlStore}
+          scopes={phase === 'demo' ? ALL_SCOPES : (saved?.scopes ?? [])}
+          link={chip}
+          onSettings={() => router.push('/settings')}
+        />
+        <TabBar current="control" />
+      </Screen>
+    </OfflineGate>
   );
 }

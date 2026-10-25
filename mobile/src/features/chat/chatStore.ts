@@ -3,6 +3,7 @@ import { createStore } from 'zustand/vanilla';
 import { ApiError, apiErrorFromThrown } from '../../api/errors';
 import type { PendingApproval } from '../../api/types';
 import { SentenceSplitter } from '../../speech/sentences';
+import { MIC_MESSAGES } from '../look/lookStore';
 import type { SpeechPort } from '../look/ports';
 import type { ChatDeps } from './ports';
 import { DEFAULT_CHAT_TIMING } from './ports';
@@ -29,6 +30,14 @@ export type ChatState = {
   approvals: PendingApproval[];
   /** An approval is being sent. */
   deciding: string | null;
+  /** The microphone is open (the button is held, or was tapped). */
+  listening: boolean;
+  /** The words heard so far, while listening. */
+  heard: string;
+  /** Why the microphone could not be used, or why it closed. */
+  micMessage: string | null;
+  /** The mic message can be fixed by downloading the phone's offline speech: show that button. */
+  micOffer: boolean;
 };
 
 export type ChatActions = {
@@ -42,11 +51,21 @@ export type ChatActions = {
   /** Start checking for approvals (while the chat screen is in front). */
   startPolling(): void;
   stopPolling(): void;
+  /** Open the microphone; what is heard is sent as the message. */
+  startListening(): Promise<void>;
+  /** Let go: the words heard are sent. */
+  finishListening(): void;
+  /** Close the microphone without sending. */
+  cancelListening(): void;
+  /** Download the offline speech language once, after the phone said it is missing. */
+  downloadSpeechPack(): Promise<void>;
+  /** The screen or app was left: close the microphone, saying why if it was open. */
+  interrupt(reason?: string): void;
   /** Forget the conversation on screen and silence the voice (the Pi keeps its own history). */
   reset(): void;
 };
 
-const INITIAL: ChatState = { messages: [], busy: false, paused: false, error: null, speak: false, approvals: [], deciding: null };
+const INITIAL: ChatState = { messages: [], busy: false, paused: false, error: null, speak: false, approvals: [], deciding: null, listening: false, heard: '', micMessage: null, micOffer: false };
 
 export function createChatStore(deps: ChatDeps) {
   const timing = { ...DEFAULT_CHAT_TIMING, ...deps.timing };
@@ -56,6 +75,7 @@ export function createChatStore(deps: ChatDeps) {
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let polling = false;
   let announced = new Set<string>();
+  let micRun = 0; // a new press bumps it; late words from an earlier press are ignored
   let speech: SpeechPort | null = null;
   const getSpeech = () => (speech ??= deps.makeSpeech());
 
@@ -67,6 +87,13 @@ export function createChatStore(deps: ChatDeps) {
       const err = apiErrorFromThrown(e);
       if (err.kind !== 'cancelled') deps.onApiError?.(err);
       return err;
+    };
+
+    const closeMic = () => {
+      if (!get().listening) return;
+      micRun++;
+      deps.recognizer?.cancel();
+      set({ listening: false, heard: '' });
     };
 
     async function checkApprovals() {
@@ -194,7 +221,65 @@ export function createChatStore(deps: ChatDeps) {
         pollTimer = null;
       },
 
+      async startListening() {
+        const recognizer = deps.recognizer;
+        if (!recognizer || get().busy || get().paused || get().listening) return;
+        speech?.stop(); // so the phone never hears its own voice
+        const run = ++micRun;
+        set({ listening: true, heard: '', micMessage: null, micOffer: false });
+        const current = () => run === micRun;
+        await recognizer.start({
+          onPartial: (text) => current() && set({ heard: text }),
+          onFinal: (text) => {
+            if (!current()) return;
+            const message = text.trim();
+            set({ listening: false, heard: '' });
+            if (message === '') set({ micMessage: MIC_MESSAGES.nothing });
+            else void get().send(message);
+          },
+          onError: (problem, detail) => {
+            if (!current()) return;
+            const why = detail && problem !== 'speechPackMissing' ? ` (${detail})` : '';
+            set({ listening: false, heard: '', micMessage: MIC_MESSAGES[problem] + why, micOffer: problem === 'speechPackMissing' && Boolean(deps.recognizer?.downloadSpeechPack) });
+          },
+        });
+      },
+
+      finishListening() {
+        if (get().listening) deps.recognizer?.stop();
+      },
+
+      cancelListening() {
+        closeMic();
+      },
+
+      async downloadSpeechPack() {
+        const download = deps.recognizer?.downloadSpeechPack;
+        if (!download) return;
+        set({ micOffer: false, micMessage: 'Asking your phone to download offline English speech…' });
+        try {
+          const result = await download.call(deps.recognizer);
+          set({
+            micMessage:
+              result === 'ready'
+                ? 'Downloaded. Tap the microphone and speak.'
+                : result === 'scheduled'
+                  ? 'The download will finish on Wi-Fi. Try the microphone again in a minute.'
+                  : "Follow your phone's download prompt, then try the microphone again.",
+          });
+        } catch {
+          set({ micMessage: 'Your phone would not start the download. Open the Google app, then Settings, Voice, Offline speech recognition, and download English (US).', micOffer: true });
+        }
+      },
+
+      interrupt(reason) {
+        const wasListening = get().listening;
+        closeMic();
+        if (wasListening && reason) set({ micMessage: `The microphone was closed: ${reason}.` });
+      },
+
       reset() {
+        closeMic();
         generation++;
         controller?.abort();
         controller = null;

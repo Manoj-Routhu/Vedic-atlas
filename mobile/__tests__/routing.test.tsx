@@ -52,15 +52,15 @@ describe('launching the app', () => {
   it('a paired phone goes straight into the app', async () => {
     startAs({ phase: 'paired', saved: SAVED, link: 'connected' });
     const r = await renderRouter(APP, { initialUrl: '/' });
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
-    expect(screen.getByRole('button', { name: 'Look' })).toBeTruthy();
+    await waitFor(() => expect(r.getPathname()).toBe('/look'));
+    expect(screen.getByRole('tab', { name: 'Look' })).toBeTruthy();
   });
 
   it('demo mode goes into the app, and says so', async () => {
     startAs({ phase: 'demo', saved: null, link: 'connected' });
     const r = await renderRouter(APP, { initialUrl: '/' });
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
-    expect(screen.getByRole('button', { name: 'Look' })).toBeTruthy();
+    await waitFor(() => expect(r.getPathname()).toBe('/look'));
+    expect(screen.getByRole('tab', { name: 'Look' })).toBeTruthy();
     expect(screen.getByLabelText('Demo mode')).toBeTruthy();
   });
 
@@ -86,7 +86,7 @@ describe('the pairing guard', () => {
   it('a paired phone cannot be left on the pairing screens', async () => {
     startAs({ phase: 'paired', saved: SAVED, link: 'connected' });
     const r = await renderRouter(APP, { initialUrl: '/welcome' });
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
+    await waitFor(() => expect(r.getPathname()).toBe('/look'));
     expect(screen.queryByText(WELCOME)).toBeNull();
   });
 
@@ -95,14 +95,14 @@ describe('the pairing guard', () => {
     const r = await renderRouter(APP, { initialUrl: '/welcome' });
     await waitFor(() => expect(screen.getByText(WELCOME)).toBeTruthy());
     await act(async () => connectionStore.setState({ phase: 'paired', saved: SAVED, link: 'connected' }));
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
-    expect(screen.getByRole('button', { name: 'Look' })).toBeTruthy();
+    await waitFor(() => expect(r.getPathname()).toBe('/look'));
+    expect(screen.getByRole('tab', { name: 'Look' })).toBeTruthy();
   });
 
   it('being removed by the Pi (or forgetting) returns to the welcome screen', async () => {
     startAs({ phase: 'paired', saved: SAVED, link: 'connected' });
     const r = await renderRouter(APP, { initialUrl: '/' });
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
+    await waitFor(() => expect(r.getPathname()).toBe('/look'));
     await act(async () => connectionStore.setState({ phase: 'unpaired', saved: null, notice: 'removed' }));
     await waitFor(() => expect(r.getPathname()).toBe('/welcome'));
     expect(screen.getByText('This phone was removed from Veda')).toBeTruthy();
@@ -117,66 +117,89 @@ describe('the pairing guard', () => {
 });
 
 describe('the app screens', () => {
-  it('Home opens Look and Settings, and each has a way back to Home', async () => {
+  it('the bar at the bottom switches between Look and Veda, and Settings opens over them and goes back', async () => {
     startAs({ phase: 'paired', saved: SAVED, link: 'connected' });
     const r = await renderRouter(APP, { initialUrl: '/' });
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
-
-    await fireEvent.press(screen.getByRole('button', { name: 'Look' }));
     await waitFor(() => expect(r.getPathname()).toBe('/look'));
     expect(screen.getByRole('button', { name: 'Take a photo' })).toBeTruthy();
-    await fireEvent.press(screen.getByRole('button', { name: 'Home' }));
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
+
+    await fireEvent.press(screen.getByRole('tab', { name: 'Veda' }));
+    await waitFor(() => expect(r.getPathname()).toBe('/chat'));
+    expect(screen.getByLabelText('Message to Veda')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('tab', { name: 'Look' }));
+    await waitFor(() => expect(r.getPathname()).toBe('/look'));
 
     await fireEvent.press(screen.getByRole('button', { name: 'Settings' }));
     await waitFor(() => expect(r.getPathname()).toBe('/settings'));
     expect(screen.getByLabelText('This phone: Pixel 8')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Look' })).toBeNull(); // Settings has no bar of its own
     await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
+    await waitFor(() => expect(r.getPathname()).toBe('/look'));
   });
 
-  it('opening Look directly still has a way home', async () => {
+  it('Settings opened directly still has a way back into the app', async () => {
     startAs({ phase: 'paired', saved: SAVED, link: 'connected' });
-    const r = await renderRouter(APP, { initialUrl: '/look' });
+    const r = await renderRouter(APP, { initialUrl: '/settings' });
+    await waitFor(() => expect(r.getPathname()).toBe('/settings'));
+    await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(r.getPathname()).toBe('/look'));
-    await fireEvent.press(screen.getByRole('button', { name: 'Home' }));
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
   });
 
   it('Look and Settings are not reachable by an unpaired phone', async () => {
-    for (const url of ['/look', '/settings', '/home']) {
+    for (const url of ['/look', '/settings', '/chat']) {
       startAs({ phase: 'unpaired' });
       const r = await renderRouter(APP, { initialUrl: url });
       await waitFor(() => expect(r.getPathname()).not.toBe(url));
       expect(screen.queryByText('Unmatched Route')).toBeNull();
     }
   });
+
+  it('when the Pi does not answer, the screen says so and offers to try again or change the address', async () => {
+    startAs({ phase: 'paired', saved: SAVED, link: 'unreachable' });
+    const r = await renderRouter(APP, { initialUrl: '/look' });
+    await waitFor(() => expect(screen.getByRole('header', { name: "Can't reach your Pi" })).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Take a photo' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Change address' }));
+    await waitFor(() => expect(r.getPathname()).toBe('/settings'));
+  });
+
+  it('Try again brings the app back once the Pi answers', async () => {
+    const testConnection = jest.fn(async () => {
+      connectionStore.getState().setLink('connected');
+      return 12;
+    });
+    startAs({ phase: 'paired', saved: SAVED, link: 'unreachable', testConnection });
+    await renderRouter(APP, { initialUrl: '/look' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy());
+    await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Take a photo' })).toBeTruthy());
+    expect(testConnection).toHaveBeenCalled();
+  });
 });
 
-describe('chat and the permissions on Home', () => {
-  it('a phone with chat and camera permission sees both buttons, and Chat opens with a way back', async () => {
+describe('the bar and the permissions', () => {
+  it('a phone with chat and camera permission sees Look and Veda, not Control', async () => {
     startAs({ phase: 'paired', saved: SAVED, link: 'connected' });
-    const r = await renderRouter(APP, { initialUrl: '/home' });
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
-    expect(screen.getByRole('button', { name: 'Look' })).toBeTruthy();
-    await fireEvent.press(screen.getByRole('button', { name: 'Chat with Veda' }));
-    await waitFor(() => expect(r.getPathname()).toBe('/chat'));
-    expect(screen.getByLabelText('Message to Veda')).toBeTruthy();
-    await fireEvent.press(screen.getByRole('button', { name: 'Home' }));
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
+    await renderRouter(APP, { initialUrl: '/look' });
+    expect(screen.getByRole('tab', { name: 'Look' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Veda' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Control' })).toBeNull();
   });
 
-  it('a phone paired without the camera or chat permission is not offered them', async () => {
+  it('a phone paired with chat only opens on Veda and is not offered the camera', async () => {
     startAs({ phase: 'paired', saved: { ...SAVED, scopes: ['chat'] }, link: 'connected' });
-    await renderRouter(APP, { initialUrl: '/home' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Chat with Veda' })).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'Look' })).toBeNull();
+    const r = await renderRouter(APP, { initialUrl: '/' });
+    await waitFor(() => expect(r.getPathname()).toBe('/chat'));
+    expect(screen.getByRole('tab', { name: 'Veda' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Look' })).toBeNull();
   });
 
-  it('a phone with no permissions is told how to fix that', async () => {
+  it('a phone with no permissions lands on Settings, which shows that it may do nothing', async () => {
     startAs({ phase: 'paired', saved: { ...SAVED, scopes: [] }, link: 'connected' });
-    await renderRouter(APP, { initialUrl: '/home' });
-    await waitFor(() => expect(screen.getByText(/not given any permissions/)).toBeTruthy());
+    const r = await renderRouter(APP, { initialUrl: '/' });
+    await waitFor(() => expect(r.getPathname()).toBe('/settings'));
+    expect(screen.getByText('Nothing yet')).toBeTruthy();
   });
 
   it('Chat is not reachable by an unpaired phone', async () => {
@@ -187,21 +210,19 @@ describe('chat and the permissions on Home', () => {
 });
 
 describe('Control', () => {
-  it('Home offers Control to a phone with the control permission, and it opens with a way back', async () => {
+  it('a phone with the control permission has the Control tab, and it opens', async () => {
     startAs({ phase: 'paired', saved: { ...SAVED, scopes: ['chat', 'control', 'vision'] }, link: 'connected' });
-    const r = await renderRouter(APP, { initialUrl: '/home' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Control' })).toBeTruthy());
-    await fireEvent.press(screen.getByRole('button', { name: 'Control' }));
+    const r = await renderRouter(APP, { initialUrl: '/look' });
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Control' })).toBeTruthy());
+    await fireEvent.press(screen.getByRole('tab', { name: 'Control' }));
     await waitFor(() => expect(r.getPathname()).toBe('/control'));
-    await fireEvent.press(screen.getByRole('button', { name: 'Home' }));
-    await waitFor(() => expect(r.getPathname()).toBe('/home'));
   });
 
   it('a phone without the control permission is not offered it', async () => {
     startAs({ phase: 'paired', saved: { ...SAVED, scopes: ['chat'] }, link: 'connected' });
-    await renderRouter(APP, { initialUrl: '/home' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Chat with Veda' })).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'Control' })).toBeNull();
+    await renderRouter(APP, { initialUrl: '/chat' });
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Veda' })).toBeTruthy());
+    expect(screen.queryByRole('tab', { name: 'Control' })).toBeNull();
   });
 
   it('Control is not reachable by an unpaired phone', async () => {
@@ -210,11 +231,12 @@ describe('Control', () => {
     await waitFor(() => expect(r.getPathname()).not.toBe('/control'));
   });
 
-  it('demo mode shows Control with example data', async () => {
+  it('demo mode has all three tabs, and Control shows example data', async () => {
     startAs({ phase: 'demo', saved: null, link: 'connected' });
-    const r = await renderRouter(APP, { initialUrl: '/home' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Control' })).toBeTruthy());
-    await fireEvent.press(screen.getByRole('button', { name: 'Control' }));
+    const r = await renderRouter(APP, { initialUrl: '/look' });
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Control' })).toBeTruthy());
+    expect(screen.getByRole('tab', { name: 'Veda' })).toBeTruthy();
+    await fireEvent.press(screen.getByRole('tab', { name: 'Control' }));
     await waitFor(() => expect(r.getPathname()).toBe('/control'));
   });
 });

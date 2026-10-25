@@ -11,8 +11,10 @@ import { LookView } from '@/features/look/LookView';
 import { isWorking } from '@/features/look/lookStore';
 import { useConnection } from '@/state/connection';
 import { Button } from '@/ui/Button';
+import { OfflineGate } from '@/ui/OfflineGate';
 import { Screen } from '@/ui/Screen';
 import type { ChipStatus } from '@/ui/StatusChip';
+import { TabBar } from '@/ui/TabBar';
 import { colors, font, spacing } from '@/ui/theme';
 
 const KEEP_AWAKE_TAG = 'look';
@@ -75,18 +77,20 @@ export default function Look() {
   );
 
   return (
-    <Screen>
-      <LookView
-        store={lookStore}
-        preview={preview}
-        canShoot={granted}
-        micAvailable
-        link={chip}
-        onBack={() => (router.canGoBack() ? router.back() : router.replace('/home'))}
-        onSettings={() => router.push('/settings')}
-        onCopy={(text) => void Clipboard.setStringAsync(text)}
-      />
-    </Screen>
+    <OfflineGate>
+      <Screen edges={['top']}>
+        <LookView
+          store={lookStore}
+          preview={preview}
+          canShoot={granted}
+          micAvailable
+          link={chip}
+          onSettings={() => router.push('/settings')}
+          onCopy={(text) => void Clipboard.setStringAsync(text)}
+        />
+        <TabBar current="look" />
+      </Screen>
+    </OfflineGate>
   );
 }
 

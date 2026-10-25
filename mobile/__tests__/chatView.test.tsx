@@ -31,7 +31,7 @@ function setup(opts: { reply?: () => AsyncGenerator<{ type: 'text'; text: string
 }
 
 const open = (ctx: ReturnType<typeof setup>, canApprove = true) =>
-  render(<ChatView store={ctx.store} link="connected" canApprove={canApprove} onBack={jest.fn()} onSettings={jest.fn()} />);
+  render(<ChatView store={ctx.store} link="connected" canApprove={canApprove} onSettings={jest.fn()} />);
 
 describe('ChatView', () => {
   it('starts with a prompt and a disabled Send button', async () => {
