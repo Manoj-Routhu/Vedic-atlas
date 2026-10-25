@@ -6,5 +6,7 @@ vision:
   image_max_edge_px: 768
   image_max_tokens: 384
   min_headroom_mb: 3000
+devices:
+  lan_enabled: true         # `veda` and `veda --restart` listen for paired phones on the home network (tokens still gate every route)
 inference:
   prompt_cache_mb: 128      # base is 768 MB; the Pi cannot spare it while vision may load

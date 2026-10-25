@@ -19,9 +19,13 @@
 #                                                               things you told it in earlier sessions)
 #        - wake helpers     inside the openwakeword package   (melspectrogram + embedding models, 2.4 MB: the
 #                                                               wake word cannot load without them)
-#   5. points config/audio.yaml at the Piper voice  (skip: --skip-config)
-#   6. creates .env from .env.example if there is none
-#   7. checks the install and tells you what is still missing
+#   5. vision for the phone app                     (skip: --skip-vision)
+#        - llama-server (llama.cpp b11716, ARM)       data/tools/llama-b11716-ubuntu-arm64/   (14 MB)
+#        - camera model Qwen3-VL-2B Q4_K_M + mmproj   data/models/vision/                     (1.1 GB + 0.4 GB, checked with SHA-256)
+#        It only runs when a paired phone sends a photo, and unloads again when idle.
+#   6. points config/audio.yaml at the Piper voice  (skip: --skip-config)
+#   7. creates .env from .env.example if there is none, and sets VEDA_DEVICE=pi on a Pi (listens for paired phones)
+#   8. checks the install and tells you what is still missing
 #
 # NOT downloaded - copy it yourself (WinSCP): the wake-word model you trained
 #   data/models/openwakeword/hey_veda.onnx   and   hey_veda.onnx.data     (BOTH files)
@@ -60,6 +64,15 @@ PIPER_BASE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main"
 PIPER_VOICE="${PIPER_VOICE:-en_US-lessac-medium}"
 PIPER_DIR="$ROOT/data/models/piper"
 
+VISION_BASE_URL="https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main"
+VISION_DIR="$ROOT/data/models/vision"
+VISION_MODEL="Qwen3VL-2B-Instruct-Q4_K_M.gguf"
+VISION_MODEL_SHA256="089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae"
+VISION_MMPROJ="mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf"
+VISION_MMPROJ_SHA256="f9a68fabba69c3b81e153367b2c7521030b0fa8bb0de400c9599c8e6725f9c82"
+LLAMA_CPP_URL="https://github.com/ggml-org/llama.cpp/releases/download/b11716/llama-b11716-bin-ubuntu-arm64.tar.gz"
+LLAMA_CPP_DIR="$ROOT/data/tools/llama-b11716-ubuntu-arm64"   # config/hardware/pi.yaml points here
+
 EMBED_BASE_URL="https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main"
 EMBED_DIR="$ROOT/data/bge-small-en-v1.5"
 
@@ -75,7 +88,7 @@ APT_PACKAGES=(build-essential cmake git wget curl ca-certificates pkg-config
 MIN_DISK_GB=8        # llama-cpp-python build + venv + up to 2.7 GB of models
 MIN_RAM_MB=3500      # set per model by select_model() (rough: model file + context + speech/memory models)
 
-DRY_RUN=0 SKIP_APT=0 SKIP_INSTALL=0 SKIP_MODELS=0 SKIP_CONFIG=0 EXTRAS=""
+DRY_RUN=0 SKIP_APT=0 SKIP_INSTALL=0 SKIP_MODELS=0 SKIP_CONFIG=0 SKIP_VISION=0 EXTRAS=""
 
 # ---------------------------------------------------------------- output helpers
 
@@ -118,6 +131,7 @@ Options:
   --skip-install     do not create the venv / pip install
   --skip-models      do not download models
   --skip-config      do not edit config/audio.yaml
+  --skip-vision      do not download the camera model and llama-server (the phone's Look screen will not work)
   --extras LIST      pyproject extras to install, comma separated (e.g. embedding,hotkey)
   --model SIZE       language model to download: 0.6b (fastest), 1.7b, or 4b (default, best answers, slowest)
   -h, --help         this text
@@ -377,6 +391,45 @@ download_wake_feature_models() {
   done
 }
 
+# SHA-256 of a file, or empty if it cannot be computed.
+sha256_of() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
+
+# The camera model for the phone app. Separate from the chat model: it runs in its own llama-server process, only while
+# a photo is being described.
+download_vision() {
+  step "Vision (phone camera)"
+  if (( SKIP_VISION )); then info "skipped (--skip-vision)"; return 0; fi
+  local arch got
+  arch="$(uname -m)"
+
+  info "camera model (Qwen3-VL-2B, about 1.5 GB)"
+  fetch "$VISION_BASE_URL/$VISION_MODEL" "$VISION_DIR/$VISION_MODEL"
+  fetch "$VISION_BASE_URL/$VISION_MMPROJ" "$VISION_DIR/$VISION_MMPROJ"
+  if (( ! DRY_RUN )); then
+    got="$(sha256_of "$VISION_DIR/$VISION_MODEL")"
+    [[ "$got" == "$VISION_MODEL_SHA256" ]] && ok "$VISION_MODEL checksum" || warn "$VISION_MODEL checksum differs (got ${got:-none}); delete it and run again."
+    got="$(sha256_of "$VISION_DIR/$VISION_MMPROJ")"
+    [[ "$got" == "$VISION_MMPROJ_SHA256" ]] && ok "$VISION_MMPROJ checksum" || warn "$VISION_MMPROJ checksum differs (got ${got:-none}); delete it and run again."
+  fi
+
+  info "llama-server (llama.cpp b11716, ARM)"
+  if [[ -x "$LLAMA_CPP_DIR/llama-server" ]]; then
+    ok "llama-server already installed"
+  elif [[ "$arch" != "aarch64" && "$arch" != "arm64" ]]; then
+    warn "$arch is not ARM, so the ARM llama-server build would not run here. Put a llama-server for this machine somewhere and set vision.binary_path in config/vision.yaml."
+  elif (( DRY_RUN )); then
+    info "[dry-run] would download $LLAMA_CPP_URL and unpack it into $LLAMA_CPP_DIR"
+  else
+    local archive="$ROOT/data/tools/llama-b11716-ubuntu-arm64.tar.gz"
+    mkdir -p "$LLAMA_CPP_DIR"
+    fetch "$LLAMA_CPP_URL" "$archive"
+    tar -xzf "$archive" -C "$LLAMA_CPP_DIR" --strip-components=1 || die "could not unpack $archive"
+    rm -f "$archive"
+    chmod +x "$LLAMA_CPP_DIR/llama-server"
+    ok "llama-server -> $LLAMA_CPP_DIR"
+  fi
+}
+
 check_wake_model() {
   step "Wake-word model (you copy this one)"
   local f missing=0
@@ -415,6 +468,11 @@ setup_env_file() {
     ok "created .env from .env.example (permissions 600)"
   else
     warn "no .env.example found; create .env yourself if you need API keys"
+  fi
+  # On a Pi, VEDA_DEVICE=pi loads config/hardware/pi.yaml: the camera model's Pi settings, and listening for paired phones.
+  if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]] && [[ -f "$ROOT/.env" ]] && ! grep -Eq '^VEDA_DEVICE=' "$ROOT/.env"; then
+    run bash -c "printf '\nVEDA_DEVICE=pi\n' >> '$ROOT/.env'"
+    ok "added VEDA_DEVICE=pi to .env"
   fi
   info "web search needs TAVILY_API_KEY in .env (weather and currency need no key)."
 }
@@ -473,6 +531,12 @@ summary() {
          Set the profile once in $ROOT/.env:   VEDA_PROFILE=$PROFILE
          (or export it in the shell, which wins over .env). Veda logs "[config] profile=..." at startup.
          Without a profile Veda runs the untrimmed base config, which is built for the 4b model.
+      6. use it from your phone (same home Wi-Fi). On a Pi, .env has VEDA_DEVICE=pi, so \`veda\` already listens for phones:
+             veda                 start Veda and open the chat prompt (if it is already running, it joins it)
+             veda --restart       stop the running Veda and start a fresh one
+             veda pair            print a one-time code and QR, then enter it in the Veda app
+             veda devices         list paired phones         veda devices revoke <id>   remove one
+         Never run two Veda servers: each loads every model again. \`veda server\` now refuses to start a second one.
       Check devices if voice is silent:  arecord -l   and   aplay -l
 EOF
 }
@@ -487,6 +551,7 @@ main() {
       --skip-install) SKIP_INSTALL=1 ;;
       --skip-models)  SKIP_MODELS=1 ;;
       --skip-config)  SKIP_CONFIG=1 ;;
+      --skip-vision)  SKIP_VISION=1 ;;
       --extras)       shift; [[ $# -gt 0 ]] || die "--extras needs a value"; EXTRAS="$1" ;;
       --extras=*)     EXTRAS="${1#--extras=}" ;;
       --model)        shift; [[ $# -gt 0 ]] || die "--model needs a value (0.6b, 1.7b or 4b)"; MODEL="$1" ;;
@@ -503,6 +568,7 @@ main() {
   install_system_packages
   if (( SKIP_INSTALL )); then step "Python environment"; info "skipped (--skip-install)"; else setup_venv_and_install; fi
   download_models
+  download_vision
   check_wake_model
   configure_tts
   setup_env_file

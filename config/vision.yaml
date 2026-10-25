@@ -1,5 +1,5 @@
 # Phone camera -> local vision model -> spoken description (docs/15-vision-mobile-design.md).
-# Off by default. The model runs in its own llama-server process on loopback, loaded on the first photo
+# On in this file (the code default is off). The model runs in its own llama-server process on loopback, loaded on the first photo
 # and stopped after idle_unload_seconds, so it costs no RAM while unused.
 # Per-machine values (binary path, threads, image size) live in config/hardware/<laptop|pi>.yaml, selected
 # with VEDA_DEVICE=laptop|pi (merged after VEDA_PROFILE).

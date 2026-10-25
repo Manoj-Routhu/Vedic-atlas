@@ -46,3 +46,22 @@ def test_a_free_port_starts_the_server(monkeypatch):
     monkeypatch.setattr(server.uvicorn, "run", lambda *a, **k: started.append((a, k)))
     assert server.cmd_server(port=port, host="127.0.0.1") == 0
     assert len(started) == 1
+
+
+def test_a_server_started_by_the_cli_listens_for_phones_only_when_lan_is_enabled(monkeypatch):
+    from controller.cli.client import VedaClient
+    from core import config as core_config
+
+    client = VedaClient.__new__(VedaClient)
+    client.server_url = "http://127.0.0.1:8000"
+
+    class _Devices:
+        lan_enabled = False
+
+    class _Cfg:
+        devices = _Devices()
+
+    monkeypatch.setattr(core_config, "load_full_config", lambda: _Cfg())
+    assert client._bind_host() == "127.0.0.1"
+    _Devices.lan_enabled = True
+    assert client._bind_host() == "0.0.0.0"
