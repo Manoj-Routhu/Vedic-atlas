@@ -1,0 +1,10 @@
+# VEDA_DEVICE=pi: Raspberry Pi 5, 8 GB. Keeps the vision model from starving the voice loop and the main model.
+# Starting points only: measure on the Pi (docs/15-vision-mobile-design.md section 8, milestone M1/M7).
+vision:
+  binary_path: data/tools/llama-b11716-ubuntu-arm64/llama-server
+  n_threads: 2              # the main model gets the other cores
+  image_max_edge_px: 768
+  image_max_tokens: 384
+  min_headroom_mb: 3000
+inference:
+  prompt_cache_mb: 128      # base is 768 MB; the Pi cannot spare it while vision may load

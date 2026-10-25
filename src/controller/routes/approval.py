@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from controller.dependencies.providers import get_approval_broker
 from service.approval.approval_broker import ApprovalBroker
@@ -26,16 +26,22 @@ from service.approval.approval_broker import ApprovalBroker
 router = APIRouter()
 
 
+def _source(request: Request) -> str:
+    """Who resolved it: the terminal UI, or a paired phone (device_auth sets request.state.device_id)."""
+    device_id = getattr(request.state, "device_id", None)
+    return f"device:{device_id}" if device_id else "ui"
+
+
 @router.post("/approval/{request_id}/approve")
-async def approve(request_id: str, broker: ApprovalBroker = Depends(get_approval_broker)):
-    if not broker.approve(request_id, source="ui"):
+async def approve(request_id: str, request: Request, broker: ApprovalBroker = Depends(get_approval_broker)):
+    if not broker.approve(request_id, source=_source(request)):
         raise HTTPException(status_code=404, detail="approval not found or already resolved")
     return {"status": "approved"}
 
 
 @router.post("/approval/{request_id}/deny")
-async def deny(request_id: str, broker: ApprovalBroker = Depends(get_approval_broker)):
-    if not broker.deny(request_id, source="ui"):
+async def deny(request_id: str, request: Request, broker: ApprovalBroker = Depends(get_approval_broker)):
+    if not broker.deny(request_id, source=_source(request)):
         raise HTTPException(status_code=404, detail="approval not found or already resolved")
     return {"status": "denied"}
 

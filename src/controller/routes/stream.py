@@ -23,10 +23,12 @@ router = APIRouter()
 @router.post("/stream")
 async def stream_chat(req: StreamRequest, request: Request, supervisor: SupervisorAgent = Depends(get_supervisor)):
     """Stream the Supervisor's response via Server-Sent Events."""
+    from_device = getattr(request.state, "device_id", None) is not None
     ctx = AgentContext(
         user_message=req.message,
-        system_context=(req.system_context or "")[:2000],
-        from_voice=req.from_voice,
+        # A paired phone may not inject prompt text or pose as the voice pipeline (device_scope_policy).
+        system_context="" if from_device else (req.system_context or "")[:2000],
+        from_voice=False if from_device else req.from_voice,
         session_id=req.session_id,
     )
     cancel_event = asyncio.Event()

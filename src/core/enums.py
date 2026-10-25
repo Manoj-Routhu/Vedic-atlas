@@ -47,6 +47,11 @@ class ExceptionCode(str, Enum):
     PATH_BLOCKED = "PATH_BLOCKED"
     EGRESS_DENIED = "EGRESS_DENIED"  # new — NetworkPolicy / egress_guard denial
     TOOL_UNAVAILABLE = "TOOL_UNAVAILABLE"  # provider down / API key not configured
+    DEVICE_UNAUTHORIZED = "DEVICE_UNAUTHORIZED"  # missing / unknown / revoked device token
+    DEVICE_FORBIDDEN = "DEVICE_FORBIDDEN"  # valid device, but the route is not in its scopes
+    VISION_UNAVAILABLE = "VISION_UNAVAILABLE"  # vision off, model missing, not enough memory, or the model process failed
+    VISION_BUSY = "VISION_BUSY"  # one photo at a time
+    IMAGE_INVALID = "IMAGE_INVALID"  # not a usable image, too large, or an expired image_id
 
     def __repr__(self):
         return self.value
@@ -77,6 +82,11 @@ class ErrorMessage(Enum):
     TOOL_MANIFEST_INVALID = "Invalid tool manifest '{name}': {detail}"
     PROMPT_NOT_FOUND = "Prompt '{name}' not found in {path}"
     TOOL_UNAVAILABLE = "Tool '{tool}' is unavailable: {detail}"
+    DEVICE_UNAUTHORIZED = "Device not authorised: {detail}"
+    DEVICE_FORBIDDEN = "This device is not allowed to {action}"
+    VISION_UNAVAILABLE = "Vision is unavailable: {detail}"
+    VISION_BUSY = "Vision is busy with another photo"
+    IMAGE_INVALID = "Image rejected: {detail}"
 
     def __repr__(self):
         return self.value

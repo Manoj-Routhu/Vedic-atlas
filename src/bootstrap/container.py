@@ -35,6 +35,8 @@ from tpa.persistence.repositories.session_context_repository import SqliteSessio
 from tpa.persistence.repositories.trace_repository import SqliteTraceRepository
 from tpa.persistence.session import SessionLocal
 
+from bootstrap.builders.devices import build_devices
+from bootstrap.builders.vision import build_vision
 from bootstrap.builders.audio import build_audio_capture, build_indicator, build_mute_switch
 from bootstrap.builders.inference import build_embedding, build_inference
 from bootstrap.builders.lookup import build_lookup, build_lookup_health
@@ -299,5 +301,8 @@ def build_app_state(app: FastAPI) -> None:
         cfg, calendar=calendar_port, tasks=task_service, voice_session=app.state.voice_session,
         calendar_changed=calendar_changed,
     )
+
+    app.state.device_service = build_devices(cfg)   # phone pairing/auth; independent of every subsystem above
+    app.state.vision = build_vision(cfg)   # phone camera -> local vision model; None unless vision.enabled; touches nothing above
 
     logger.info(f"Bootstrap: {agent_registry.count} agents, {len(skill_registry.list_all())} skills registered")

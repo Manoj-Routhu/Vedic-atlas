@@ -75,6 +75,16 @@ def get_reminders(request: Request):
     return _require(request, "reminders", "reminders")
 
 
+def get_vision_service(request: Request):
+    """503 when vision is switched off (vision.enabled: false in config/vision.yaml)."""
+    return _require(request, "vision", "vision (turned off in config/vision.yaml)")
+
+
+def get_device_service(request: Request):
+    """503 when phone pairing is disabled (devices.enabled: false)."""
+    return _require(request, "device_service", "device pairing")
+
+
 def get_speaker_enrollment_service(request: Request) -> "SpeakerEnrollmentService":
     """503 when speaker ID is disabled/unavailable - same "not initialized"
     semantics as every other _require'd service, just conditionally built."""
