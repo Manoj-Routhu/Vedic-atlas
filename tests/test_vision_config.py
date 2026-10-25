@@ -25,9 +25,9 @@ def _isolated(monkeypatch, tmp_path):
     config._full_config_cache = None
 
 
-def test_vision_is_off_by_default():
-    assert VisionConfig().enabled is False
-    assert config.load_full_config().vision.enabled is False
+def test_vision_is_off_in_code_and_switched_on_by_config_vision_yaml():
+    assert VisionConfig().enabled is False   # a missing section never turns the camera model on
+    assert config.load_full_config().vision.enabled is True   # config/vision.yaml turns it on
 
 
 def test_yaml_values_load():

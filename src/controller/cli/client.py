@@ -230,11 +230,21 @@ class VedaClient:
         except psutil.Error:
             return False
 
+    def _bind_host(self) -> str:
+        """Where a server started by this client listens: this machine only, unless devices.lan_enabled is on (the Pi's
+        hardware profile turns it on) so a paired phone can reach the server that `veda` / `veda --restart` starts."""
+        from core.config import load_full_config
+
+        if load_full_config().devices.lan_enabled:
+            return "0.0.0.0"
+        return urlparse(self.server_url).hostname or "127.0.0.1"
+
     def _spawn(self, repo_root: Path, log_path: Path):
         src_dir = repo_root / "src"
         env = os.environ.copy()
         env["PYTHONPATH"] = str(src_dir) + os.pathsep + env.get("PYTHONPATH", "")
-        host = urlparse(self.server_url).hostname or "127.0.0.1"
+        host = self._bind_host()
+        env["VEDA_BIND_HOST"] = host   # read by /api/devices/pairing-code so `veda pair` can warn when nothing can reach us
         port = str(self._port)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_file = open(log_path, "wb")

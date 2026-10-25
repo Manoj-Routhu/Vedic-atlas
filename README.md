@@ -81,16 +81,28 @@ only and Android only for now. It is a working prototype for sideloading, **not*
 for the Play Store (it still needs HTTPS or a documented local-network story, a privacy
 policy and in-app reporting for AI content).
 
-### Pair a phone
-1. Put the vision model files in `data/models/vision/` (see `config/vision.yaml`; nothing
-   is downloaded automatically) and set `VEDA_DEVICE=laptop` or `pi`.
-2. Start the server so the phone can reach it: `veda server --lan`
-3. In another terminal run `veda pair`. It prints a one-time code and a QR.
-4. In the app, scan the QR or type the code. List or remove phones with `veda devices` and
-   `veda devices revoke <id>`.
+### Set up a Raspberry Pi
+`bash scripts/setup_pi.sh` installs everything, including the phone camera model: the ARM
+`llama-server` build and Qwen3-VL-2B (about 1.5 GB, checked with SHA-256; skip with
+`--skip-vision`). It adds `VEDA_DEVICE=pi` to `.env`, which loads `config/hardware/pi.yaml`
+(the Pi's vision settings, and listening for paired phones).
 
-Only one Veda server should run on port 8000. A server started without `--lan` listens on
-this machine only, so a phone cannot reach it and a code from it will not work.
+### Use it from a phone (same home Wi-Fi)
+On the Pi:
+```
+veda                # start Veda and open the chat prompt (joins it if it is already running)
+veda --restart      # stop the running Veda and start a fresh one
+veda pair           # print a one-time code and QR; enter it in the app
+veda devices        # list paired phones; `veda devices revoke <id>` removes one
+```
+Talk to it by voice at the Pi, or type at the prompt, or use the phone for Look, Chat and
+Control. A physical mute switch on the Pi's mic leaves the terminal and the phone working.
+
+On a laptop (no hardware profile) a server started by `veda` listens on this machine only,
+so a phone cannot reach it. Start it with `veda server --lan` first, then `veda pair`.
+
+Run only one Veda server: each loads every model again. `veda server` refuses to start a
+second one (it names the process already running).
 
 ### Develop the app without a Pi
 `scripts/mock_pi.py` serves the real routes, pairing and permission gate with a scripted
