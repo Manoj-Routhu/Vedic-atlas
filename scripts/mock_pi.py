@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import ipaddress
 import socket
 import sys
@@ -35,8 +36,10 @@ from fastapi import FastAPI, Request  # noqa: E402
 from controller.middleware.device_auth import DeviceAuthMiddleware, is_loopback  # noqa: E402
 from controller.routes import approval as approval_route  # noqa: E402
 from controller.routes import devices as devices_route  # noqa: E402
+from controller.routes import music as music_route  # noqa: E402
 from controller.routes import vision as vision_route  # noqa: E402
 from mock_control import MockControlState, make_control_router  # noqa: E402
+from mock_music import make_music  # noqa: E402
 from controller.sse.encoder import sse_encode  # noqa: E402
 from controller.sse.stream_adapter import sse_response  # noqa: E402
 from domain.entities.vision import VisionStatus  # noqa: E402
@@ -136,9 +139,17 @@ def create_app(
     vision_enabled: bool = True,
     simulate_lan: bool = False,
     code_ttl_s: int = 600,
+    music_off: str | None = None,
+    music_max_seconds: float = 300.0,
 ) -> FastAPI:
     state_dir = Path(state_dir or tempfile.mkdtemp(prefix="mock-pi-"))
-    app = FastAPI(title="Mock Pi")
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if _app.state.music is not None:
+            _app.state.music.start()   # remembers the event loop, which the song's time limit needs
+        yield
+
+    app = FastAPI(title="Mock Pi", lifespan=lifespan)
     register_exception_handlers(app)
 
     devices_cfg = DevicesConfig(pairing_code_ttl_s=code_ttl_s, pairing_max_attempts=5, pairing_global_per_hour=1000)
@@ -152,6 +163,8 @@ def create_app(
     app.state.vision = VisionService(model, VisionConfig(enabled=True)) if vision_enabled else None
     app.state.model = model
     app.state.pending_tasks = []
+    app.state.music = None if music_off else make_music(music_max_seconds)
+    app.state.music_off_reason = music_off   # None, or off | offline | tools_missing
 
     @app.get("/api/health")
     async def health():
@@ -181,6 +194,7 @@ def create_app(
     app.include_router(devices_route.router, prefix="/api")
     app.include_router(vision_route.router, prefix="/api")
     app.include_router(approval_route.router, prefix="/api")
+    app.include_router(music_route.router, prefix="/api")
     app.include_router(make_control_router(MockControlState()), prefix="/api")
 
     def _local_only(request: Request) -> None:
@@ -267,6 +281,8 @@ def main() -> None:
     p.add_argument("--memory-error", action="store_true", help="make every photo fail as if the Pi were out of memory")
     p.add_argument("--vision-off", action="store_true", help="vision switched off, as in the default config")
     p.add_argument("--simulate-lan", action="store_true", help="treat every request as a phone on the Wi-Fi (for tests on one machine)")
+    p.add_argument("--music-off", choices=["off", "offline", "tools_missing"], default=None, help="music unavailable, for this reason")
+    p.add_argument("--music-seconds", type=float, default=300.0, help="how long a song plays before it stops by itself")
     p.add_argument("--code-ttl", type=int, default=600, help="seconds a pairing code stays valid")
     p.add_argument(
         "--state-dir", type=Path, default=Path(tempfile.gettempdir()) / "veda-mock-pi",
@@ -277,6 +293,7 @@ def main() -> None:
     app = create_app(
         state_dir=a.state_dir, cold_seconds=a.cold_seconds, chunk_delay=a.chunk_delay, fail_after=a.fail_after, memory_error=a.memory_error,
         vision_enabled=not a.vision_off, simulate_lan=a.simulate_lan, code_ttl_s=a.code_ttl,
+        music_off=a.music_off, music_max_seconds=a.music_seconds,
     )
     service: DeviceService = app.state.device_service
     full = service.create_code(allow_approve=True).code

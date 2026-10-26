@@ -182,6 +182,7 @@ def build_app_state(app: FastAPI) -> None:
     if room_driver is None:   # no sensor: the tool leaves the control prompt entirely
         tool_manifests = {n: m for n, m in tool_manifests.items() if n != "get_room_temperature"}
     music_on = cfg.music.enabled and cfg.privacy.online.enabled
+    music_off_reason = None if music_on else ("off" if not cfg.music.enabled else "offline")   # shown to the phone
     if cfg.music.enabled and not music_on:
         logger.warning("[music] enabled but privacy.online.enabled is false: music is off")
     if music_on:
@@ -192,6 +193,7 @@ def build_app_state(app: FastAPI) -> None:
             logger.warning(f"[music] off: not found: {', '.join(absent)}. Run scripts/setup_pi.sh (Pi) or scripts/setup_windows.ps1 (Windows), "
                            "or install them (see config/music.yaml)")
             music_on = False
+            music_off_reason = "tools_missing"
     if not music_on:   # the tool leaves the control prompt entirely
         tool_manifests = {n: m for n, m in tool_manifests.items() if n != "music_control"}
     app.state.tool_manifests = tool_manifests
@@ -340,6 +342,7 @@ def build_app_state(app: FastAPI) -> None:
     )
 
     app.state.music = None
+    app.state.music_off_reason = music_off_reason   # None while music is on; otherwise off | offline | tools_missing
     if music_on:
         from service.music.music_service import MusicService
         from service.skills.builtin.music import MusicSkill

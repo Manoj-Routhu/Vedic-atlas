@@ -5,6 +5,7 @@
  */
 import { act, fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library';
 
+import { musicStore } from '../src/features/music/musicRuntime';
 import { connectionStore, type ConnectionState, type Saved } from '../src/state/connection';
 
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
@@ -238,5 +239,44 @@ describe('Control', () => {
     expect(screen.getByRole('tab', { name: 'Veda' })).toBeTruthy();
     await fireEvent.press(screen.getByRole('tab', { name: 'Control' }));
     await waitFor(() => expect(r.getPathname()).toBe('/control'));
+  });
+});
+
+describe('Music', () => {
+  beforeEach(() => musicStore.getState().reset());
+
+  it('a phone with the control permission has the Music tab between Veda and Control, and it opens', async () => {
+    startAs({ phase: 'paired', saved: { ...SAVED, scopes: ['chat', 'control', 'vision'] }, link: 'connected' });
+    const r = await renderRouter(APP, { initialUrl: '/look' });
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Music' })).toBeTruthy());
+    expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Look', 'Veda', 'Music', 'Control']);
+    await fireEvent.press(screen.getByRole('tab', { name: 'Music' }));
+    await waitFor(() => expect(r.getPathname()).toBe('/music'));
+    expect(screen.getByRole('header', { name: 'Music' })).toBeTruthy();
+  });
+
+  it('a phone without the control permission is not offered Music', async () => {
+    startAs({ phase: 'paired', saved: SAVED, link: 'connected' }); // chat and vision only
+    await renderRouter(APP, { initialUrl: '/look' });
+    expect(screen.queryByRole('tab', { name: 'Music' })).toBeNull();
+  });
+
+  it('Music is not reachable by an unpaired phone', async () => {
+    startAs({ phase: 'unpaired' });
+    const r = await renderRouter(APP, { initialUrl: '/music' });
+    await waitFor(() => expect(r.getPathname()).not.toBe('/music'));
+  });
+
+  it('demo mode plays an example song and shows it', async () => {
+    startAs({ phase: 'unpaired' });
+    connectionStore.getState().enterDemo(); // creates the demo Pi, as the Welcome screen's button does
+    const r = await renderRouter(APP, { initialUrl: '/look' });
+    await fireEvent.press(await screen.findByRole('tab', { name: 'Music' }));
+    await waitFor(() => expect(r.getPathname()).toBe('/music'));
+    await act(async () => musicStore.getState().refresh()); // the screen asks the demo Pi what is playing
+    await fireEvent.changeText(await screen.findByTestId('song-input'), 'tum hi ho');
+    await fireEvent.press(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(screen.getByText('tum hi ho (demo)')).toBeTruthy());
+    expect(screen.getByLabelText('Playing on your Pi')).toBeTruthy();
   });
 });

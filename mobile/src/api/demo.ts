@@ -1,7 +1,7 @@
 import { ApiError } from './errors';
 import type { PiApi } from './pi';
 import type {
-  ActivityItem, ChatEvent, ImageInfo, PendingApproval, PersonaInfo, PiTask, PrivacyInfo, ProactivityInfo, RemindersInfo,
+  ActivityItem, ChatEvent, ImageInfo, MusicInfo, PendingApproval, PersonaInfo, PiTask, PrivacyInfo, ProactivityInfo, RemindersInfo,
   VisionEvent, VisionStatus, VisionStyle, VoiceInfo,
 } from './types';
 
@@ -63,6 +63,7 @@ export class DemoApi implements PiApi {
   private persona_ = 'friend';
   private proactivity_ = 'medium';
   private leads = [15];
+  private song: { title: string; playedBefore: number; since: number | null; paused: boolean } | null = null;
 
   constructor(opts: DemoOptions = {}) {
     this.coldMs = opts.coldMs ?? 1500;
@@ -188,6 +189,52 @@ export class DemoApi implements PiApi {
       { id: 2, at: '2026-10-25T09:30:00', agent: 'demo', totalMs: 400, tools: [{ name: 'set_reminder', ok: true, ms: 400 }] },
       { id: 1, at: '2026-10-25T09:00:00', agent: 'demo', totalMs: 1200, tools: [{ name: 'weather', ok: true, ms: 1200 }] },
     ];
+  }
+
+  // ---------- music: nothing really plays, but the screen behaves like the real thing ----------
+
+  private musicInfo(): MusicInfo {
+    const s = this.song;
+    if (!s) return { available: true, reason: null, state: 'idle', title: null, elapsedS: null, limitS: null, durationS: null };
+    const elapsed = s.playedBefore + (s.since !== null ? (Date.now() - s.since) / 1000 : 0);
+    return { available: true, reason: null, state: s.paused ? 'paused' : 'playing', title: s.title, elapsedS: elapsed, limitS: 300, durationS: null };
+  }
+
+  async musicStatus(): Promise<MusicInfo> {
+    return this.musicInfo();
+  }
+
+  async playSong(query: string): Promise<MusicInfo> {
+    const words = query.trim();
+    if (!words) throw new ApiError('validation');
+    this.song = { title: `${words} (demo)`, playedBefore: 0, since: Date.now(), paused: false };
+    return this.musicInfo();
+  }
+
+  async stopMusic(): Promise<MusicInfo> {
+    this.song = null;
+    return this.musicInfo();
+  }
+
+  async pauseMusic(): Promise<MusicInfo> {
+    const s = this.song;
+    if (!s) throw new ApiError('nothingPlaying');
+    if (!s.paused && s.since !== null) {
+      s.playedBefore += (Date.now() - s.since) / 1000;
+      s.since = null;
+      s.paused = true;
+    }
+    return this.musicInfo();
+  }
+
+  async resumeMusic(): Promise<MusicInfo> {
+    const s = this.song;
+    if (!s) throw new ApiError('nothingPlaying');
+    if (s.paused) {
+      s.since = Date.now();
+      s.paused = false;
+    }
+    return this.musicInfo();
   }
 
   async pendingApprovals(): Promise<PendingApproval[]> {

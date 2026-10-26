@@ -52,6 +52,9 @@ class ExceptionCode(str, Enum):
     VISION_UNAVAILABLE = "VISION_UNAVAILABLE"  # vision off, model missing, not enough memory, or the model process failed
     VISION_BUSY = "VISION_BUSY"  # one photo at a time
     IMAGE_INVALID = "IMAGE_INVALID"  # not a usable image, too large, or an expired image_id
+    MUSIC_UNAVAILABLE = "MUSIC_UNAVAILABLE"  # music is switched off, offline, or mpv / yt-dlp are missing
+    MUSIC_NOT_FOUND = "MUSIC_NOT_FOUND"  # no song matched, or the search itself failed
+    MUSIC_NOT_PLAYING = "MUSIC_NOT_PLAYING"  # pause / resume with no song playing
 
     def __repr__(self):
         return self.value
@@ -87,6 +90,9 @@ class ErrorMessage(Enum):
     VISION_UNAVAILABLE = "Vision is unavailable: {detail}"
     VISION_BUSY = "Vision is busy with another photo"
     IMAGE_INVALID = "Image rejected: {detail}"
+    MUSIC_UNAVAILABLE = "Music is unavailable: {detail}"
+    MUSIC_NOT_FOUND = "{detail}"
+    MUSIC_NOT_PLAYING = "No song is playing"
 
     def __repr__(self):
         return self.value

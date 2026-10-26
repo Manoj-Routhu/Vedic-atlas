@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
 
+from core.enums import ErrorMessage, ExceptionCode
+from exceptions.exception import AppException
+
 if TYPE_CHECKING:
     from domain.ports.governance_port import GovernanceProvider
     from service.agent.supervisor import SupervisorAgent
@@ -78,6 +81,15 @@ def get_reminders(request: Request):
 def get_vision_service(request: Request):
     """503 when vision is switched off (vision.enabled: false in config/vision.yaml)."""
     return _require(request, "vision", "vision (turned off in config/vision.yaml)")
+
+
+def get_music_service(request: Request):
+    """503 MUSIC_UNAVAILABLE when music is off, offline, or mpv / yt-dlp are missing (the reason is in GET /api/music/status)."""
+    music = getattr(request.app.state, "music", None)
+    if music is None:
+        reason = getattr(request.app.state, "music_off_reason", None) or "off"
+        raise AppException("music", ExceptionCode.MUSIC_UNAVAILABLE, ErrorMessage.MUSIC_UNAVAILABLE, detail=reason)
+    return music
 
 
 def get_device_service(request: Request):

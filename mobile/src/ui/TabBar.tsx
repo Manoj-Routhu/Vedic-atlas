@@ -6,13 +6,14 @@ import { useConnection } from '../state/connection';
 import { Icon, type IconName } from './Icon';
 import { colors, font } from './theme';
 
-export type TabName = 'look' | 'chat' | 'control';
+export type TabName = 'look' | 'chat' | 'music' | 'control';
 
 export const BAR_HEIGHT = 72;
 
 const TABS: { name: TabName; label: string; icon: IconName; scope: string }[] = [
   { name: 'look', label: 'Look', icon: 'eye', scope: 'vision' },
   { name: 'chat', label: 'Veda', icon: 'message-circle', scope: 'chat' },
+  { name: 'music', label: 'Music', icon: 'music', scope: 'control' },
   { name: 'control', label: 'Control', icon: 'sliders', scope: 'control' },
 ];
 
