@@ -1,0 +1,20 @@
+# Play a song by name ("play Tum Hi Ho"). yt-dlp finds it on YouTube, mpv plays it through the device's speaker.
+#
+# EGRESS EXCEPTION (deliberate, documented): yt-dlp and mpv open their own connections to YouTube, so they do not go through
+# AllowListedHttpClient or privacy.online.allowlist. Only the search words leave the device. Music switches itself on only when
+# mpv AND yt-dlp are installed, and is ignored when privacy.online.enabled is false (fully offline).
+#
+# While a song plays the microphone is held closed. The mute switch, /mute and /unmute (any mute change) stop the song;
+# after that the song is gone. The song also stops by itself when it ends or after max_minutes.
+#
+# Needs on the device (the setup scripts install both; Veda checks at startup and logs what is missing):
+#   yt-dlp : installed by `pip install -e .` (it is a normal dependency)
+#   mpv    : a system program. Raspberry Pi / Linux: `sudo apt install mpv` (scripts/setup_pi.sh).
+#            Windows: `winget install --id shinchiro.mpv -e` (scripts/setup_windows.ps1); Veda also finds it in
+#            C:\Program Files\MPV Player without it being on PATH.
+enabled: true
+max_minutes: 5            # backstop: playback is always stopped after this long
+search_results: 5         # YouTube hits looked at; the one whose title best matches the request is played
+search_timeout_sec: 12
+mpv_path: mpv           # found on PATH, or in mpv's usual Windows folders; a full path also works
+ytdlp_path: yt-dlp

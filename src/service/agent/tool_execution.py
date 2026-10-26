@@ -40,6 +40,7 @@ class TurnOutcome:
     prompt_tokens: dict[str, int] = field(default_factory=dict)
     timings_ms: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    reply_mode: str = ""   # "template" | "advise": what shaped the reply (trace only)
 
 
 async def execute_call(
@@ -49,6 +50,7 @@ async def execute_call(
     `private` (the tool's manifest says so) keeps the result text out of the log line."""
     tool, args = call["tool"], call["args"]
     started = time.perf_counter()
+    logger.info(f"[tool-call] start tool={tool} args={json.dumps(args, default=str)}")
     try:
         result = await skill_runner.execute_skill(ctx, tool, **args)
         ok = bool(result.success)
@@ -77,12 +79,25 @@ async def narrate_with_grounding(
     num_predict: int,
     temperature: float,
     outcome: "TurnOutcome",
+    task: str = "narrate",
+    header: str = "",
+    private: bool = False,
 ) -> str | None:
-    """The narrate/content stage: one short completion over capped tool results, re-checked for ungrounded numbers
-    (two attempts). Returns the text, or None when the model failed or kept inventing numbers; the caller then
-    falls back to the deterministic reply."""
-    stage_b = composer.narrate_stage(ctx.user_message, results)
+    """The narrate/content stage: one short completion over capped tool results, checked for ungrounded numbers.
+    An EMPTY completion is retried once (transient); an UNGROUNDED one is not: the retry would use the same prompt at
+    near-zero temperature with no hint of what was wrong, and the caller's deterministic reply is already correct, so
+    a retry costs seconds for low odds and would break the two-model-calls-per-turn ceiling.
+    Returns the text, or None; the caller then falls back to the deterministic reply.
+    `task` picks the content task ("narrate" or "advise"); `header` is a line placed above the results in the prompt."""
+    if task == "narrate" and not header:
+        stage_b = composer.narrate_stage(ctx.user_message, results)
+    else:
+        body = "\n".join(r.strip() for r in results if r and r.strip())
+        document = f"{header}\n{body}" if header else body
+        stage_b = composer.content_stage(task, document, ctx.user_message)
     outcome.prompt_tokens["narrate"] = stage_b.tokens
+    shown = (lambda t: "<private>" if private else t[:300])
+    logger.info(f"[{task}] decoding over {len(results)} result(s), prompt ~{stage_b.tokens} tokens...")
     for attempt in range(2):
         try:
             text = (await client.complete(
@@ -93,10 +108,14 @@ async def narrate_with_grounding(
             logger.error(f"[tool-turn] narrate stage inference failed: {e}")
             return None
         if not text:
+            logger.info(f"[{task}] empty output (attempt {attempt + 1})")
             continue
-        if grounding_check(text, results, ctx.user_message):
+        grounded = grounding_check(text, results, ctx.user_message)
+        logger.info(f"[{task}] output={shown(text)!r} grounded={grounded}")
+        if grounded:
             outcome.narrated = True
             return text
-        logger.warning(f"[tool-guard] ungrounded narration (attempt {attempt + 1}): {text[:160]!r}")
+        logger.warning(f"[tool-guard] ungrounded narration (attempt {attempt + 1}): {shown(text)!r}")
         outcome.notes.append("ungrounded narration rejected")
+        return None   # not retried: see the docstring
     return None

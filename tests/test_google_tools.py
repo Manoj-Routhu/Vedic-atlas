@@ -128,7 +128,8 @@ def test_the_five_tools_load_and_keep_the_users_content_private():
 def test_a_send_never_joins_a_multi_call_and_a_draft_does():
     calls = lambda *names: ControlDecision(calls=tuple({"tool": n, "args": a} for n, a in names), needs_live_data=True)  # noqa: E731
     both = calls(("gmail_send", {}), ("get_weather", {}))
-    assert resolve(both, MANIFESTS).route is Route.CLARIFY
+    held = resolve(both, MANIFESTS)   # the send is held, the weather still runs and the question follows
+    assert held.route is Route.TOOLS and [c["tool"] for c in held.calls] == ["get_weather"] and held.follow_up
     assert resolve(calls(("gmail_send", {})), MANIFESTS).route is Route.TOOLS
     ok = calls(("gmail_search", {"unread_only": True}), ("calendar_agenda", {"date_offset": 0}))
     assert resolve(ok, MANIFESTS).route is Route.TOOLS

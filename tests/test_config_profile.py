@@ -60,4 +60,4 @@ def test_an_unknown_profile_fails_loudly(monkeypatch):
 def test_every_shipped_profile_loads(monkeypatch, name):
     monkeypatch.setenv("VEDA_PROFILE", name)
     cfg = config.load_full_config()
-    assert cfg.inference.n_ctx == 3072 and cfg.app.max_history == 4 and cfg.app.chat_persona == "compact"
+    assert cfg.inference.n_ctx == (4096 if name == "qwen3-4b" else 3072) and cfg.app.max_history == 4 and cfg.app.chat_persona == "compact"

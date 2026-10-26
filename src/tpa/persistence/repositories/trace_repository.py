@@ -26,6 +26,7 @@ def _to_entity(row: TurnTraceRow) -> TurnTrace:
         state_used=meta.get("state_used", False), slots_inherited=meta.get("slots_inherited", []),
         needs_live_data=meta.get("needs_live_data"), clarified=meta.get("clarified", False),
         prefix_cache_hit=meta.get("prefix_cache_hit"),
+        reply_mode=meta.get("reply_mode", ""), also_chat=meta.get("also_chat", False),
     )
 
 
@@ -46,6 +47,7 @@ class SqliteTraceRepository:
                         "state_used": trace.state_used, "slots_inherited": trace.slots_inherited,
                         "needs_live_data": trace.needs_live_data, "clarified": trace.clarified,
                         "prefix_cache_hit": trace.prefix_cache_hit,
+                        "reply_mode": trace.reply_mode, "also_chat": trace.also_chat,
                     },
                     ensure_ascii=False,
                 ),

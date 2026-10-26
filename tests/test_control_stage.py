@@ -31,7 +31,7 @@ def _t(role, content):
 def test_control_schema_shape_and_default_key_order():
     s = build_control_schema(MANIFESTS)
     assert list(s["properties"]) == list(CONTROL_KEYS)
-    assert s["required"] == ["needs_live_data", "calls"]   # clarification is optional: written only when asking
+    assert s["required"] == ["needs_live_data", "calls"]   # advise / also_chat / clarification are optional: written only when set
     assert CONTROL_KEYS[0] == "needs_live_data"            # the flag is committed to before the calls
     assert s["additionalProperties"] is False
     calls = s["properties"]["calls"]
@@ -46,8 +46,9 @@ def test_control_schema_can_never_force_a_call():
 
 
 def test_control_schema_key_order_is_configurable_but_must_be_a_permutation():
-    s = build_control_schema(MANIFESTS, key_order=("calls", "needs_live_data", "clarification"))
-    assert list(s["properties"]) == ["calls", "needs_live_data", "clarification"]
+    order = ("calls", "needs_live_data", "advise", "also_chat", "clarification")
+    s = build_control_schema(MANIFESTS, key_order=order)
+    assert list(s["properties"]) == list(order)
     with pytest.raises(ValueError):
         build_control_schema(MANIFESTS, key_order=("calls", "clarification"))
 
@@ -124,7 +125,7 @@ def test_prompt_examples_only_reference_real_tools_and_args():
 
 
 def test_examples_follow_the_schema_key_order():
-    for order in (CONTROL_KEYS, ("calls", "needs_live_data", "clarification")):
+    for order in (CONTROL_KEYS, ("calls", "needs_live_data", "advise", "also_chat", "clarification")):
         system = _composer().control_stage("x", key_order=order).system
         lines = [l for l in system.splitlines() if l.startswith("{") and "needs_live_data" in l and "calls" in l]
         assert len(lines) >= 8
@@ -260,3 +261,68 @@ def test_a_decision_without_the_optional_clarification_key_parses():
     asked = parse_decision('{"needs_live_data":false,"calls":[],"clarification":"Which one?"}')
     assert asked.valid and asked.clarification == "Which one?"
     assert not parse_decision('{"calls":[]}').valid          # the flag is still mandatory
+
+
+# ---- guards (docs/12 P1) -----------------------------------------------------------------------------------------------
+
+# The composer's default counter (estimate_tokens, 3.4 chars/token) deliberately over-counts: the static block measures 2588
+# with it today, against ~2,240 measured with the real tokenizer (training/README.md). docs/12's 2,400-token cap is therefore
+# ~2,750 in this counter's units. Raised to 3,000 when budgets.control went from 3000 to 3450 (+15%, the 4B model is the
+# only supported one) to make room for P3/P5. Now equal to budgets.control (3550) - 400 (the room kept for ACTIVE/RECENT/USER).
+STATIC_CONTROL_TOKEN_CAP = 3150
+
+
+def test_static_control_prompt_stays_under_the_token_cap():
+    composer = _composer()
+    tokens = composer._count(composer.control_stage("x").system)
+    assert tokens <= STATIC_CONTROL_TOKEN_CAP, (
+        f"the static control prompt is {tokens} tokens (cap {STATIC_CONTROL_TOKEN_CAP}). control_stage never trims the "
+        "static block: past the budget it silently drops CONVERSATION HISTORY, so follow-ups like 'and in Chennai?' "
+        "stop working and it looks like a model problem. Shorten tool descriptions or examples before adding more."
+    )
+
+
+def test_every_rendered_example_round_trips_the_key_order_helper_unchanged():
+    # _in_key_order silently skips examples whose keys are outside CONTROL_KEYS: such an example would be shown to the
+    # model in one order while the grammar forces another.
+    system = _composer().control_stage("x").system
+    lines = [l for l in system.splitlines() if l.startswith('{"needs_live_data"')]
+    assert len(lines) >= 8
+    for line in lines:
+        assert set(json.loads(line)) <= set(CONTROL_KEYS), f"example uses a key the schema does not know: {line}"
+        assert PromptComposer._in_key_order(line, CONTROL_KEYS) == line
+
+
+# ---- advise / also_chat (docs/12 P3) -------------------------------------------------------------------------------------
+
+def test_advise_and_also_chat_are_optional_booleans_emitted_after_calls_and_before_clarification():
+    s = build_control_schema(MANIFESTS)
+    assert list(s["properties"])[-3:] == ["advise", "also_chat", "clarification"] and list(s["properties"])[:2] == ["needs_live_data", "calls"]
+    assert s["properties"]["advise"] == {"type": "boolean"} and s["properties"]["also_chat"] == {"type": "boolean"}
+    assert "advise" not in s["required"] and "also_chat" not in s["required"]   # an always-present key costs ~2 s a turn
+
+
+def test_flags_default_to_false_and_are_read_strictly():
+    from service.agent.control_decoder import parse_decision
+    d = parse_decision('{"needs_live_data":true,"calls":[]}')
+    assert d.valid and d.advise is False and d.also_chat is False
+    d = parse_decision('{"needs_live_data":true,"calls":[],"advise":true,"also_chat":true}')
+    assert d.valid and d.advise is True and d.also_chat is True
+    for bad in ('"advise":"true"', '"advise":1', '"also_chat":"yes"'):
+        assert not parse_decision('{"needs_live_data":true,"calls":[],' + bad + "}").valid
+
+
+def test_only_the_readout_tools_allow_advice():
+    assert {m.name for m in MANIFESTS if m.allow_advice} == {"get_weather", "get_weather_forecast", "calendar_agenda", "device_status", "get_room_temperature"}
+
+
+def test_the_flags_ride_on_the_resolution_but_the_route_table_is_unchanged():
+    from domain.entities.control_decision import ControlDecision
+    from domain.policies.dispatch_policy import Route, resolve
+    by_name = {m.name: m for m in MANIFESTS}
+    call = {"tool": "get_weather", "args": {"place": "Pune"}}
+    r = resolve(ControlDecision(calls=(call,), needs_live_data=True, advise=True, also_chat=True), by_name)
+    assert r.route is Route.TOOLS and r.advise and r.also_chat
+    r = resolve(ControlDecision(calls=(call,), needs_live_data=True), by_name)
+    assert r.route is Route.TOOLS and not r.advise and not r.also_chat
+    assert resolve(ControlDecision(needs_live_data=False, advise=True, also_chat=True), by_name).route is Route.CHAT

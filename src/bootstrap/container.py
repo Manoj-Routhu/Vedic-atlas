@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from datetime import datetime
 
 from fastapi import FastAPI
 
 from core.config import load_full_config
 from core.logging_config import logger
+from domain.policies.room_policy import room_line
 from domain.policies.token_budget_policy import PromptBudgets, estimate_tokens
 from service.agent.assistant_orchestrator import AssistantOrchestrator
 from service.agent.control_decoder import ControlDecoder
@@ -166,6 +168,32 @@ def build_app_state(app: FastAPI) -> None:
     else:
         tool_manifests = {n: m for n, m in tool_manifests.items() if not m.requires_online}
         logger.info("[lookup] online tools disabled (privacy.online.enabled=false)")
+    room_cfg = cfg.sensing.room
+    room_driver = None
+    if room_cfg.enabled:
+        try:
+            from tpa.sensors.room_drivers import build_room_driver
+            room_driver = build_room_driver(
+                room_cfg.driver, gpio_pin=room_cfg.gpio_pin,
+                mock_temperature_c=room_cfg.mock_temperature_c, mock_humidity_pct=room_cfg.mock_humidity_pct,
+            )
+        except Exception as e:   # e.g. the DHT11 library is not installed on this machine
+            logger.error(f"[room] sensor driver {room_cfg.driver!r} unavailable, room feature off: {e}")
+    if room_driver is None:   # no sensor: the tool leaves the control prompt entirely
+        tool_manifests = {n: m for n, m in tool_manifests.items() if n != "get_room_temperature"}
+    music_on = cfg.music.enabled and cfg.privacy.online.enabled
+    if cfg.music.enabled and not music_on:
+        logger.warning("[music] enabled but privacy.online.enabled is false: music is off")
+    if music_on:
+        from tpa.audio.music_adapters import find_program
+        absent = [f"{label} ({program!r})" for label, program in (("mpv", cfg.music.mpv_path), ("yt-dlp", cfg.music.ytdlp_path))
+                  if find_program(program) is None]
+        if absent:   # music turns itself off, and the tool leaves the prompt, until the setup script (or you) installs them
+            logger.warning(f"[music] off: not found: {', '.join(absent)}. Run scripts/setup_pi.sh (Pi) or scripts/setup_windows.ps1 (Windows), "
+                           "or install them (see config/music.yaml)")
+            music_on = False
+    if not music_on:   # the tool leaves the control prompt entirely
+        tool_manifests = {n: m for n, m in tool_manifests.items() if n != "music_control"}
     app.state.tool_manifests = tool_manifests
     skill_registry.register(TasksSkill(
         service=task_service,
@@ -215,6 +243,17 @@ def build_app_state(app: FastAPI) -> None:
         manifest = tool_manifests.get(tool_name)
         if manifest is not None:
             skill_registry.register(skill_cls(system_control, manifest, governance=governance))
+    from service.sensing.room_state import RoomState
+    room_state = RoomState()
+    app.state.room_state = app.state.room_sensor = None
+    if room_driver is not None:
+        from service.sensing.room_sensor import RoomSensor
+        from service.skills.builtin.room import RoomTemperatureSkill
+        skill_registry.register(RoomTemperatureSkill(
+            tool_manifests["get_room_temperature"], room_state, room_cfg.max_age_sec,
+        ))
+        app.state.room_state = room_state
+        app.state.room_sensor = RoomSensor(room_driver, room_state, poll_interval=room_cfg.poll_interval_sec)
     if 'current_time' in tool_manifests:
         from service.skills.builtin.clock import CurrentTimeSkill
         skill_registry.register(CurrentTimeSkill(tool_manifests['current_time']))
@@ -252,6 +291,9 @@ def build_app_state(app: FastAPI) -> None:
         conversation_intent=semantic_recall.conversation_intent_score if cfg.embedding.conversation_intent_min is not None else None,
         conversation_intent_min=cfg.embedding.conversation_intent_min or 0.82,
         conversation_intent_soft_min=cfg.embedding.conversation_intent_soft_min,
+        adaptive_reply=cfg.app.adaptive_reply, mixed_intent=cfg.app.mixed_intent,
+        parallel_tool_calls=cfg.app.parallel_tool_calls,
+        room_context=(lambda: room_line(room_state.get(), datetime.now(), room_cfg.max_age_sec)) if room_driver is not None else None,
     )
     app.state.orchestrator = orchestrator
     supervisor = SupervisorAgent(model=cfg.agents.supervisor.model, orchestrator=orchestrator)
@@ -297,9 +339,25 @@ def build_app_state(app: FastAPI) -> None:
         supervisor=supervisor, event_bus=event_bus, speaker_id=speaker_recognizer,
     )
 
+    app.state.music = None
+    if music_on:
+        from service.music.music_service import MusicService
+        from service.skills.builtin.music import MusicSkill
+        from tpa.audio.music_adapters import MpvPlayer, YtDlpResolver
+        mc = cfg.music
+        voice = app.state.voice_session
+        music = MusicService(
+            YtDlpResolver(mc.ytdlp_path, mc.search_results, mc.search_timeout_sec), MpvPlayer(mc.mpv_path, mc.ytdlp_path),
+            capture_gate, max_seconds=mc.max_minutes * 60, is_busy=voice.is_busy if voice is not None else None,
+        )
+        capture_gate.add_mute_listener(music.on_mute_change)   # the mute switch and /mute /unmute are the guaranteed stop
+        skill_registry.register(MusicSkill(tool_manifests["music_control"], music))
+        app.state.music = music
+        logger.info(f"[music] on: songs play through mpv for at most {mc.max_minutes:g} minute(s); the mic is closed meanwhile")
+
     app.state.reminders = build_reminders(
         cfg, calendar=calendar_port, tasks=task_service, voice_session=app.state.voice_session,
-        calendar_changed=calendar_changed,
+        calendar_changed=calendar_changed, music=app.state.music,
     )
 
     app.state.device_service = build_devices(cfg)   # phone pairing/auth; independent of every subsystem above

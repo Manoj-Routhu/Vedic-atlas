@@ -26,7 +26,7 @@ def estimate_tokens(text: str) -> int:
 class PromptBudgets:
     """Max prompt tokens per stage (system + prompt together)."""
 
-    control: int = 3000   # unified control decode: persona + every tool + rules/examples (static, cached ~2000) + volatile tail
+    control: int = 3550   # unified control decode: persona + every tool + rules/examples (static, cached ~2000) + volatile tail
     narrate: int = 500    # Stage B: phrase the tool result
     chat: int = 1500      # plain conversation, no tools
     chat_history_turns: int = 8

@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from datetime import datetime, timezone
+from typing import Callable
 
 from core.logging_config import logger
 from domain.entities.capture_state import CaptureState
@@ -58,7 +59,10 @@ class CaptureGate:
         self._audio = audio
         self._bus = bus
         self._status_display = status_display
-        self._capture_paused = False
+        # Who is holding the capture paused (a voice turn, music...). The mic reopens only when EVERY holder has let go,
+        # so the end of a voice turn can never reopen it while music is playing.
+        self._pause_sources: set[str] = set()
+        self._mute_listeners: list[Callable[[bool], None]] = []
         self._capture_lifecycle_lock = threading.RLock()
         # Guards _state against the mute-switch callback arriving on a
         # foreign thread (pynput's listener thread) while a reader is in
@@ -91,7 +95,7 @@ class CaptureGate:
     def stop(self) -> None:
         """Mute and release the mic. Always safe to call twice."""
         with self._capture_lifecycle_lock:
-            self._capture_paused = False
+            self._pause_sources.clear()
             self._apply(muted=True, source="shutdown", previous=self._state.muted)
         stopper = getattr(self._mute_switch, "stop", None)
         if callable(stopper):
@@ -109,21 +113,24 @@ class CaptureGate:
             return self._state.muted
 
     def pause_capture(self, source: str = "voice_turn") -> None:
-        """Stop audio capture temporarily without changing the user's mute state."""
+        """Stop audio capture temporarily without changing the user's mute state. Held per `source`."""
         with self._capture_lifecycle_lock:
-            if self._capture_paused:
-                return
-            self._capture_paused = True
-            if not self.is_muted():
+            first = not self._pause_sources
+            self._pause_sources.add(source)
+            if first and not self.is_muted():
                 self._stop_audio()
-            logger.info(f"[capture-gate] capture paused (source={source!r})")
+            logger.info(f"[capture-gate] capture paused (source={source!r}, holders={sorted(self._pause_sources)})")
 
     def resume_capture(self, source: str = "voice_turn") -> bool:
-        """Resume capture unless the user has muted the microphone meanwhile."""
+        """Let go of the pause held by `source`. The mic reopens when no holder is left, unless the user has muted
+        meanwhile. Returns whether capture is live now."""
         with self._capture_lifecycle_lock:
-            if not self._capture_paused:
-                return not self.is_muted()
-            self._capture_paused = False
+            if source not in self._pause_sources:
+                return not self._pause_sources and not self.is_muted()
+            self._pause_sources.discard(source)
+            if self._pause_sources:
+                logger.info(f"[capture-gate] {source!r} released; still held by {sorted(self._pause_sources)}")
+                return False
             muted = self.is_muted()
             if not muted:
                 self._start_audio()
@@ -132,6 +139,11 @@ class CaptureGate:
                 f"(source={source!r})"
             )
             return not muted
+
+    def add_mute_listener(self, callback: Callable[[bool], None]) -> None:
+        """Call `callback(muted)` after EVERY mute or unmute, from the physical switch or from the API/CLI. It runs on
+        whichever thread made the change, so it must be quick and thread-safe. A listener's failure never blocks the gate."""
+        self._mute_listeners.append(callback)
 
     @property
     def state(self) -> CaptureState:
@@ -177,7 +189,7 @@ class CaptureGate:
                     self._drive_indicator(True)
                     self._commit(muted=True, source=f"{source}:indicator-failed", previous=previous)
                     return
-                if not self._capture_paused:
+                if not self._pause_sources:
                     self._start_audio()
             else:
                 self._stop_audio()
@@ -193,6 +205,11 @@ class CaptureGate:
         if muted != previous:
             logger.info(f"[capture-gate] {'MUTED' if muted else 'LISTENING'} (source={source!r})")
             self._publish(muted=muted, previous=previous, source=source)
+            for listener in list(self._mute_listeners):
+                try:
+                    listener(muted)
+                except Exception as e:
+                    logger.warning(f"[capture-gate] mute listener failed: {type(e).__name__}: {e}")
 
     # -- Fan-out (each isolated; one failing consumer must not block others) --
 

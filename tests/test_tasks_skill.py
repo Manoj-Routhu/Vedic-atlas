@@ -111,3 +111,52 @@ def test_delete_by_id_and_purge_old_completed():
     future = datetime.now() + timedelta(days=8)
     assert svc.purge_completed(now=future) == 2
     assert svc.list(include_done=True) == []
+
+
+# ---- timed reminders (docs/12 P2) ---------------------------------------------------------------------------------------
+
+_NOW = datetime(2026, 10, 24, 14, 0)
+
+
+def test_parse_due_absent_empty_or_unparseable_means_no_due_time():
+    for bad in (None, "", "   ", "soon", "25:99", "banana o'clock"):
+        assert TasksSkill._parse_due(bad, now=_NOW) is None
+
+
+def test_parse_due_full_timestamp_is_local_time():
+    assert TasksSkill._parse_due("2026-10-25T09:00", now=_NOW) == datetime(2026, 10, 25, 9, 0)
+    aware = TasksSkill._parse_due("2026-10-25T09:00:00+00:00", now=_NOW)
+    assert aware is not None and aware.tzinfo is None
+
+
+def test_parse_due_bare_time_is_today_or_tomorrow_if_already_passed():
+    assert TasksSkill._parse_due("18:00", now=_NOW) == datetime(2026, 10, 24, 18, 0)
+    assert TasksSkill._parse_due("12:00", now=_NOW) == datetime(2026, 10, 25, 12, 0)
+
+
+def test_a_timed_reminder_is_stored_with_its_time():
+    svc = _service()
+    skill = TasksSkill(svc, _MANIFEST)
+    due = (datetime.now() + timedelta(hours=3)).replace(microsecond=0, second=0)
+    result = _run(skill, action="add", title="get vegetables", due_at=due.isoformat(timespec="minutes"))
+    assert result.success and svc.list()[0].due_at == due.replace(second=0)
+
+
+def test_a_personal_reminder_about_a_meeting_is_not_mistaken_for_a_calendar_entry():
+    skill = TasksSkill(_service(), _MANIFEST)
+    assert _run(skill, action="add", title="team meeting", due_at="2026-10-24T12:00").success
+    assert not _run(skill, action="add", title="block calendar for Manoj").success
+
+
+def test_repeating_a_reminder_with_a_new_time_updates_the_existing_task():
+    svc = _service()
+    skill = TasksSkill(svc, _MANIFEST)
+    early = (datetime.now() + timedelta(hours=1)).replace(second=0, microsecond=0)
+    later = early + timedelta(minutes=40)
+    assert _run(skill, action="add", title="get bike from service", due_at=early.isoformat()).success
+    result = _run(skill, action="add", title="get bike from service", due_at=later.isoformat())
+    assert result.success and "remind you" in result.metadata["spoken"]
+    assert [t.due_at for t in svc.list()] == [later] and len(svc.list()) == 1
+    again = _run(skill, action="add", title="get bike from service", due_at=later.isoformat())
+    assert "already on your list" in again.metadata["spoken"]          # the same time again changes nothing
+    assert "remind you" in _run(skill, action="add", title="call mum", due_at=later.isoformat()).metadata["spoken"]

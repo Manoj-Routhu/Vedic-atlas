@@ -4,6 +4,7 @@ description: Forecast for a place 0-6 days ahead (0 today, 1 tomorrow); also for
 reply_mode: template        # the sentence is built from the provider's numbers; it names the place and the day
 permission_level: auto
 requires_online: true
+allow_advice: true          # the model may ask for a reasoned answer ("umbrella?") instead of the readout
 cache_ttl_sec: 1800
 hosts: [api.open-meteo.com, geocoding-api.open-meteo.com]
 

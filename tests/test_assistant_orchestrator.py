@@ -11,7 +11,7 @@ from domain.entities.agent_context import AgentContext
 from domain.entities.agent_result import AgentResult
 from domain.entities.control_decision import ControlDecision
 from domain.entities.skill_result import SkillResult
-from domain.policies.dispatch_policy import ONE_AT_A_TIME_REPLY, REFUSAL_REPLY, UNPARSEABLE_REPLY
+from domain.policies.dispatch_policy import ONE_AT_A_TIME_REPLY, REFUSAL_REPLY, SEPARATELY_REPLY, UNPARSEABLE_REPLY
 from domain.policies.reply_policy import UNCONFIRMED_REPLY
 from service.agent.assistant_orchestrator import AssistantOrchestrator
 from service.agent.base_agent import BaseAgent
@@ -104,7 +104,7 @@ def fail(error="provider down"):
     return SkillResult(skill_name="x", success=False, error=error)
 
 
-def env(decisions, skills, *, responder_text="Chat reply.", narration="Narrated.", claims=lambda t: False, conversation_intent=None):
+def env(decisions, skills, *, responder_text="Chat reply.", narration="Narrated.", claims=lambda t: False, conversation_intent=None, adaptive_reply=False):
     engine = create_engine("sqlite:///:memory:", future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, future=True, expire_on_commit=False)
@@ -116,6 +116,7 @@ def env(decisions, skills, *, responder_text="Chat reply.", narration="Narrated.
         decoder=decoder, composer=PromptComposer(FilePromptStore(), list(MANIFESTS.values())), skill_runner=runner,
         manifests=MANIFESTS, responder=responder, client=client, conversation=convo, claims_action=claims,
         session_state=session_state, traces=traces, grounding_check=lambda *a: True, conversation_intent=conversation_intent,
+        adaptive_reply=adaptive_reply,
     )
     return SimpleNamespace(orch=orch, decoder=decoder, runner=runner, convo=convo, responder=responder,
                            client=client, state=session_state, traces=traces)
@@ -176,7 +177,17 @@ def test_invalid_decode_fails_closed_instead_of_guessing():
 def test_destructive_call_in_a_multi_call_is_not_executed():
     e = env([dec([call("get_weather", place="Pune"), call("tasks", action="delete", title="bank")])], {"get_weather": WEATHER})
     _, result = turn(e, "weather in Pune and delete the bank task")
-    assert result.response == ONE_AT_A_TIME_REPLY and e.runner.ran == []
+    assert result.response == "In Pune it's 18 degrees. " + SEPARATELY_REPLY    # the weather ran; the delete never did
+    assert e.runner.ran == [("get_weather", {"place": "Pune"})]
+
+
+def test_the_models_own_clarification_is_asked_after_the_tool_answer_and_saved_in_history():
+    decision = ControlDecision(calls=(call("get_weather", place="Pune"),), needs_live_data=True, clarification="Which task do you mean?")
+    e = env([decision], {"get_weather": WEATHER})
+    _, result = turn(e, "weather in Pune and mark it done")
+    assert result.response == "In Pune it's 18 degrees. Which task do you mean?"
+    assert e.convo.added[-1][1] == result.response
+    assert "follow-up question asked" in e.traces.recent(1)[0].notes
 
 
 def test_orchestration_bug_returns_an_error_reply_not_an_exception():
@@ -459,3 +470,347 @@ def test_a_score_below_the_soft_threshold_changes_nothing():
     e = env([dec(clar="Which one?")], {}, conversation_intent=about(score=0.70))
     _, result = turn(e, "which one")
     assert result.response == "Which one?" and e.responder.ran == 0
+
+
+def test_the_conversation_intent_override_only_ever_produces_chat():
+    cases = [
+        dec([call("get_weather", place="Tokyo")], live=True),   # tools -> chat
+        dec(clar="What do you mean?"),                          # clarify -> chat
+        dec(live=True),                                         # refuse -> chat
+        dec(),                                                  # chat stays chat
+        ControlDecision(valid=False, note="bad"),               # fail-closed -> chat
+    ]
+    for decision in cases:
+        e = env([decision], {"get_weather": WEATHER}, responder_text="Chat.", conversation_intent=about())
+        _, result = turn(e, "what are we discussing")
+        assert result.response == "Chat." and e.responder.ran == 1 and e.runner.ran == []
+
+
+def test_the_trace_records_reply_mode_and_also_chat_only_when_adaptive_reply_is_on():
+    flagged = ControlDecision(calls=(call("get_weather", place="Tokyo"),), needs_live_data=True, also_chat=True)
+    for adaptive in (False, True):
+        e = env([flagged], {"get_weather": WEATHER}, adaptive_reply=adaptive)
+        turn(e, "weather in Tokyo")
+        trace = e.traces.recent(1)[0]
+        assert trace.reply_mode == "template" and trace.also_chat is adaptive
+
+
+# ---- advise (docs/12 P4) -------------------------------------------------------------------------------------------------
+
+from domain.policies.reply_policy import resolve_reply_mode   # noqa: E402
+
+FORECAST = ok(spoken="Tomorrow in Pune: rain, 24 degrees.")
+ADVISE_CALL = lambda: ControlDecision(calls=(call("get_weather_forecast", place="Pune", date_offset=1),), needs_live_data=True, advise=True)
+
+
+class RecordingClient(FakeClient):
+    def __init__(self, text):
+        super().__init__(text)
+        self.prompts = []
+
+    async def complete(self, **kw):
+        self.prompts.append(kw)
+        return await super().complete(**kw)
+
+
+def advise_env(decision, skills, text, *, adaptive=True, real_grounding=True):
+    e = env([decision], skills, narration=text, adaptive_reply=adaptive)
+    e.orch._client = e.client = RecordingClient(text)
+    if real_grounding:
+        e.orch._grounding_check = AssistantOrchestrator._default_grounding
+    return e
+
+
+def test_resolve_reply_mode_needs_the_model_and_every_tool_to_agree():
+    assert resolve_reply_mode(True, [True]) == "advise" and resolve_reply_mode(True, [True, True]) == "advise"
+    assert resolve_reply_mode(True, [True, False]) == "template"    # one literal-readback tool keeps the whole turn on templates
+    assert resolve_reply_mode(False, [True]) == "template" and resolve_reply_mode(True, []) == "template"
+
+
+def test_advise_runs_one_content_decode_over_all_results_and_is_traced():
+    e = advise_env(ADVISE_CALL(), {"get_weather_forecast": FORECAST}, "Take an umbrella: rain is forecast for tomorrow.")
+    _, result = turn(e, "will it rain tomorrow in Pune, do I need an umbrella")
+    assert result.response == "Take an umbrella: rain is forecast for tomorrow."
+    assert e.client.calls == 1
+    prompt = e.client.prompts[0]["prompt"]
+    assert "Do not calculate new numbers" in prompt and "VERIFIED" in prompt and "Tomorrow in Pune: rain, 24 degrees." in prompt
+    assert e.traces.recent(1)[0].reply_mode == "advise"
+
+
+def test_advise_is_ignored_when_adaptive_reply_is_off():
+    e = advise_env(ADVISE_CALL(), {"get_weather_forecast": FORECAST}, "Take an umbrella.", adaptive=False)
+    _, result = turn(e, "umbrella?")
+    assert result.response == "Tomorrow in Pune: rain, 24 degrees." and e.client.calls == 0
+
+
+def test_advise_on_a_tool_that_does_not_allow_it_is_clamped_to_the_template():
+    two = ControlDecision(calls=(call("get_weather_forecast", place="Pune", date_offset=1), call("tasks", action="add", title="milk")),
+                          needs_live_data=True, advise=True)
+    e = advise_env(two, {"get_weather_forecast": FORECAST, "tasks": ok(spoken="Added milk to your list.")}, "x")
+    _, result = turn(e, "umbrella? and add milk")
+    assert result.response == "Tomorrow in Pune: rain, 24 degrees. Added milk to your list." and e.client.calls == 0
+
+
+def test_ungrounded_advice_falls_back_to_the_template_after_exactly_one_decode():
+    e = advise_env(ADVISE_CALL(), {"get_weather_forecast": FORECAST}, "Take an umbrella, it will be 77 degrees.")
+    _, result = turn(e, "umbrella?")
+    assert result.response == "Tomorrow in Pune: rain, 24 degrees." and e.client.calls == 1
+    assert e.traces.recent(1)[0].reply_mode == "template"
+
+
+def test_an_empty_narration_is_retried_once_but_an_ungrounded_one_is_not():
+    e = env([dec([call("web_search", query="x")], live=True)], {"web_search": ok(observation="first line")}, narration="")
+    e.orch._client = e.client = RecordingClient("")
+    turn(e, "x")
+    assert e.client.calls == 2
+    e = env([dec([call("web_search", query="x")], live=True)], {"web_search": ok(observation="It is 20 degrees")}, narration="It is 99 degrees")
+    e.orch._grounding_check = AssistantOrchestrator._default_grounding
+    _, result = turn(e, "x")
+    assert e.client.calls == 1 and result.response == "It is 20 degrees"
+
+
+def test_grounding_never_runs_when_there_are_no_tool_results():
+    assert AssistantOrchestrator._default_grounding("There are 7 continents.", [], "how many continents are there")
+    assert not AssistantOrchestrator._default_grounding("It is 77 degrees.", ["It is 31 degrees."], "weather")
+
+
+def test_the_advise_task_shares_the_content_prefix_and_leaves_narrate_alone():
+    c = PromptComposer(FilePromptStore(), list(MANIFESTS.values()))
+    a, n = c.content_stage("advise", "doc", "q"), c.content_stage("narrate", "doc", "q")
+    assert a.system == n.system and "TASK:" in a.prompt and a.prompt != n.prompt
+    assert "advice" in c._prompts.get("narrate")   # narrate.md still forbids advice, untouched
+
+
+# ---- room temperature (docs/12 P5) ---------------------------------------------------------------------------------------
+
+from datetime import timedelta   # noqa: E402
+
+from domain.entities.room_snapshot import RoomSnapshot   # noqa: E402
+from domain.policies.room_policy import room_line   # noqa: E402
+from service.sensing.room_sensor import RoomSensor   # noqa: E402
+from service.sensing.room_state import RoomState   # noqa: E402
+from service.skills.builtin.room import UNAVAILABLE, RoomTemperatureSkill   # noqa: E402
+from tpa.sensors.room_drivers import MockRoomDriver   # noqa: E402
+
+
+def test_room_line_rounds_and_a_stale_or_missing_reading_is_absent():
+    snap = RoomSnapshot(30.6, 47.5, NOW - timedelta(minutes=4))
+    assert room_line(snap, NOW, 1800) == "ROOM: 31°C, 48% humidity (4 min ago)."
+    assert room_line(RoomSnapshot(30.6, 47.5, NOW - timedelta(minutes=31)), NOW, 1800) == ""
+    assert room_line(None, NOW, 1800) == ""
+
+
+def test_the_sensor_stores_the_latest_reading_and_a_failed_read_never_raises():
+    state = RoomState()
+    sensor = RoomSensor(MockRoomDriver(28.0, 55.0), state, now=lambda: NOW)
+    asyncio.run(sensor._poll_and_publish())
+    assert state.get() == RoomSnapshot(28.0, 55.0, NOW)
+
+    class Broken:
+        def read(self):
+            raise RuntimeError("checksum")
+
+    state2 = RoomState()
+    asyncio.run(RoomSensor(Broken(), state2, now=lambda: NOW)._poll_and_publish())
+    assert state2.get() is None
+
+
+def test_the_room_tool_reads_the_snapshot_and_fails_cleanly_when_it_is_stale():
+    manifest = MANIFESTS["get_room_temperature"]
+    state = RoomState()
+    skill = RoomTemperatureSkill(manifest, state, 1800, now=lambda: NOW)
+    result = asyncio.run(skill.execute(AgentContext(user_message="x")))
+    assert not result.success and result.metadata["spoken"] == UNAVAILABLE
+    state.set(RoomSnapshot(30.6, 47.5, NOW - timedelta(minutes=4)))
+    result = asyncio.run(skill.execute(AgentContext(user_message="x")))
+    assert result.success and result.metadata["spoken"] == "It's 31 degrees in here, with 48 percent humidity."
+    state.set(RoomSnapshot(30.6, 47.5, NOW - timedelta(minutes=40)))
+    assert not asyncio.run(skill.execute(AgentContext(user_message="x"))).success
+
+
+def test_the_room_line_is_appended_to_system_context_never_assigned():
+    e = env([dec()], {})
+    e.orch._room_context = lambda: "ROOM: 31°C, 48% humidity (4 min ago)."
+    ctx = AgentContext(user_message="I'm shivering", system_context="CALLER NOTE")
+    asyncio.run(e.orch.execute(ctx))
+    assert ctx.system_context == "CALLER NOTE\nROOM: 31°C, 48% humidity (4 min ago)."
+    e = env([dec()], {})
+    e.orch._room_context = lambda: ""
+    ctx = AgentContext(user_message="hi", system_context="CALLER NOTE")
+    asyncio.run(e.orch.execute(ctx))
+    assert ctx.system_context == "CALLER NOTE"
+
+
+def test_the_control_prompt_separates_the_room_sensor_from_the_weather():
+    system = PromptComposer(FilePromptStore(), list(MANIFESTS.values())).control_stage("x").system
+    assert "get_room_temperature(" in system and "indoors only" in system and "In here" in system
+
+
+# ---- mixed intent (docs/12 P7) -------------------------------------------------------------------------------------------
+
+from domain.policies.grounding_policy import states_a_measurement   # noqa: E402
+
+PUNE = lambda a: ok(spoken="In Pune it's 24 degrees.")
+
+
+def mixed_env(decision, skills, *, responder_text="That's 56.", mixed=True, adaptive=True):
+    e = env([decision], skills, responder_text=responder_text, adaptive_reply=adaptive)
+    e.orch._mixed_intent = adaptive and mixed
+    seen = []
+    orig = e.responder.execute
+
+    async def spy(ctx):
+        seen.append(ctx)
+        return await orig(ctx)
+
+    e.responder.execute = spy
+    e.seen = seen
+    return e
+
+
+def chat_plus_weather(**kw):
+    return ControlDecision(calls=(call("get_weather", place="Pune"),), needs_live_data=True, also_chat=True, **kw)
+
+
+def test_mixed_turn_answers_both_halves_chat_first_tool_last_with_no_extra_decode():
+    e = mixed_env(chat_plus_weather(), {"get_weather": PUNE})
+    ctx, result = turn(e, "what is 7 times 8, and the weather in Pune")
+    assert result.response == "That's 56. In Pune it's 24 degrees."
+    assert e.responder.ran == 1 and e.client.calls == 0
+    chat_ctx = e.seen[0]
+    assert chat_ctx.metadata["tool_half_pending"] and chat_ctx.metadata["skip_persist"]
+    assert "tool_half_pending" not in ctx.metadata                      # the caller's context is untouched
+    assert e.convo.added == [("user", "what is 7 times 8, and the weather in Pune", "sess-1"),
+                             ("assistant", "That's 56. In Pune it's 24 degrees.", "sess-1")]   # ONE combined turn
+    assert e.traces.recent(1)[0].reply_mode == "mixed" and e.traces.recent(1)[0].also_chat is True
+
+
+def test_without_the_mixed_intent_flag_the_tool_half_replies_alone():
+    for kwargs in ({"mixed": False}, {"adaptive": False}):
+        e = mixed_env(chat_plus_weather(), {"get_weather": PUNE}, **kwargs)
+        _, result = turn(e, "x")
+        assert result.response == "In Pune it's 24 degrees." and e.responder.ran == 0
+
+
+def test_a_chat_half_that_states_a_measurement_is_dropped_and_the_verified_sentence_stands_alone():
+    for invented in ("It's probably 77 degrees there.", "Around 60% humidity.", UNCONFIRMED_REPLY):
+        e = mixed_env(chat_plus_weather(), {"get_weather": PUNE}, responder_text=invented)
+        _, result = turn(e, "x")
+        assert result.response == "In Pune it's 24 degrees."
+    assert not states_a_measurement("7 times 8 is 56") and states_a_measurement("34 degrees")
+
+
+def test_a_failing_chat_half_still_lets_the_tool_half_reply():
+    e = mixed_env(chat_plus_weather(), {"get_weather": PUNE})
+
+    async def boom(ctx):
+        raise RuntimeError("model down")
+
+    e.responder.execute = boom
+    _, result = turn(e, "x")
+    assert result.response == "In Pune it's 24 degrees."
+
+
+def test_when_advise_applies_it_wins_and_the_chat_half_is_dropped():
+    both = ControlDecision(calls=(call("get_weather_forecast", place="Pune", date_offset=1),), needs_live_data=True,
+                           advise=True, also_chat=True)
+    e = mixed_env(both, {"get_weather_forecast": FORECAST}, responder_text="That's 56.")
+    e.orch._client = e.client = RecordingClient("Take an umbrella: rain is forecast for tomorrow.")
+    _, result = turn(e, "x")
+    assert result.response == "Take an umbrella: rain is forecast for tomorrow." and e.responder.ran == 0 and e.client.calls == 1
+
+
+def test_a_tool_that_needs_its_own_narration_never_joins_a_mixed_turn():
+    both = ControlDecision(calls=(call("web_search", query="x"),), needs_live_data=True, also_chat=True)
+    e = mixed_env(both, {"web_search": ok(observation="first line")})
+    _, result = turn(e, "x")
+    assert e.responder.ran == 0          # control + narrate + chat would be three decodes
+
+
+def test_the_streamed_path_also_answers_both_halves():
+    e = mixed_env(chat_plus_weather(), {"get_weather": PUNE})
+    _, text = turn(e, "x", stream=True)
+    assert text == "That's 56. In Pune it's 24 degrees."
+
+
+def test_the_real_responder_caps_output_adds_the_tail_line_and_saves_nothing_itself():
+    from service.agent.responder import ResponderAgent
+    convo = SimpleNamespace(turns=[], get_summaries_block=lambda: "", added=[], add_turn=lambda *a, **k: convo.added.append(a))
+    knowledge = SimpleNamespace(get_context=lambda: "")
+    responder = ResponderAgent(client=None, conversation=convo, knowledge=knowledge)
+    plain, mixed = AgentContext(user_message="hi"), AgentContext(user_message="hi", metadata={"tool_half_pending": True, "skip_persist": True})
+    assert responder._budget(plain) == {} and responder._budget(mixed) == {"num_predict": 40}
+    assert "handled separately" not in responder.build_prompt(plain)
+    prompt = responder.build_prompt(mixed)
+    assert "handled separately" in prompt and prompt.index("handled separately") < prompt.index("USER: hi")
+    asyncio.run(responder.on_completion(mixed, "That's 56."))
+    assert convo.added == []
+    asyncio.run(responder.on_completion(plain, "Hello."))
+    assert len(convo.added) == 2
+
+
+# ---- parallel tool calls (docs/12 P8) ------------------------------------------------------------------------------------
+
+import time as _time   # noqa: E402
+
+
+class TimedSkills:
+    """Like SkillRunner: appends to ctx.skill_results when a call FINISHES; tracks how many calls overlap."""
+
+    def __init__(self, delays, levels):
+        self.delays, self.levels, self.running, self.peak = delays, levels, 0, 0
+        self.skill_registry = SimpleNamespace(get=lambda name: SimpleNamespace(permission_level=self.levels[name]))
+
+    async def execute_skill(self, ctx, name, **args):
+        self.running += 1
+        self.peak = max(self.peak, self.running)
+        await asyncio.sleep(self.delays[args.get("place") or args.get("title") or name])
+        self.running -= 1
+        ctx.skill_results.append({"skill": name, "args": args})
+        return ok(spoken=f"{name}:{args.get('place') or args.get('title')}")
+
+
+def parallel_env(decision, runner, *, parallel=True):
+    e = env([decision], {})
+    e.orch._skill_runner = runner
+    e.orch._parallel_tool_calls = parallel
+    return e
+
+
+TWO_CITIES = ControlDecision(calls=(call("get_weather", place="Slow"), call("get_weather", place="Fast")), needs_live_data=True)
+
+
+def test_auto_calls_run_at_the_same_time_and_results_stay_in_call_order():
+    runner = TimedSkills({"Slow": 0.3, "Fast": 0.05}, {"get_weather": "auto"})
+    e = parallel_env(TWO_CITIES, runner)
+    started = _time.perf_counter()
+    ctx, result = turn(e, "weather in Slow and Fast")
+    assert _time.perf_counter() - started < 0.5 and runner.peak == 2          # ~max(t1, t2), not t1 + t2
+    assert result.response == "get_weather:Slow get_weather:Fast"              # the slow one finished last but is first
+    assert [c["args"]["place"] for c in ctx.skill_results] == ["Slow", "Fast"]
+
+
+def test_without_the_flag_calls_stay_serial():
+    runner = TimedSkills({"Slow": 0.05, "Fast": 0.05}, {"get_weather": "auto"})
+    turn(parallel_env(TWO_CITIES, runner, parallel=False), "x")
+    assert runner.peak == 1
+
+
+def test_calls_that_are_not_auto_never_run_concurrently_and_keep_call_order():
+    mixed = ControlDecision(calls=(call("tasks", action="add", title="milk"), call("get_weather", place="Slow"),
+                                   call("get_weather", place="Fast")), needs_live_data=True)
+    runner = TimedSkills({"milk": 0.1, "Slow": 0.2, "Fast": 0.05}, {"tasks": "notify", "get_weather": "auto"})
+    e = parallel_env(mixed, runner)
+    ctx, result = turn(e, "x")
+    assert result.response == "tasks:milk get_weather:Slow get_weather:Fast"
+    assert [c["skill"] for c in ctx.skill_results] == ["tasks", "get_weather", "get_weather"]
+    assert runner.peak == 2                      # the two lookups overlap; the task never joins them
+    approve = TimedSkills({"milk": 0.05, "Slow": 0.05, "Fast": 0.05}, {"tasks": "approve", "get_weather": "approve"})
+    turn(parallel_env(mixed, approve), "x")
+    assert approve.peak == 1                     # approval prompts are one at a time
+
+
+def test_an_unreadable_permission_level_counts_as_not_auto():
+    runner = TimedSkills({"Slow": 0.05, "Fast": 0.05}, {})                     # registry lookup raises KeyError
+    turn(parallel_env(TWO_CITIES, runner), "x")
+    assert runner.peak == 1

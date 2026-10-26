@@ -269,6 +269,7 @@ class VedaClient:
         src_dir = repo_root / "src"
         env = os.environ.copy()
         env["PYTHONPATH"] = str(src_dir) + os.pathsep + env.get("PYTHONPATH", "")
+        env["PYTHONUNBUFFERED"] = "1"   # log lines reach data/veda-server.log as they happen, not in blocks
         host = self._bind_host()
         env["VEDA_BIND_HOST"] = host   # read by /api/devices/pairing-code so `veda pair` can warn when nothing can reach us
         port = str(self._port)

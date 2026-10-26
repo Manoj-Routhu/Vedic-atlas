@@ -623,3 +623,80 @@ def test_api_is_503_when_reminders_are_disabled():
     app = FastAPI()
     app.include_router(route.router, prefix="/api")
     assert TestClient(app).get("/api/reminders/status").status_code == 503
+
+
+# ---- tasks remind once, at their time; reminders are spoken without the voice loop ---------------------------------------------
+
+def test_a_task_gets_only_the_reminder_at_its_time_never_a_heads_up():
+    rules = ReminderRules(lead_minutes=(15,), at_start=True)
+    task = ReminderItem(SOURCE_TASK, "6", "get bike from service", NOW + timedelta(minutes=40))
+    event = ReminderItem(SOURCE_CALENDAR, "e1", "Design review", NOW + timedelta(minutes=40))
+    planned = rp.plan([task, event], NOW, rules, set())
+    assert [(r.item.source, r.kind) for r in planned] == [
+        (SOURCE_CALENDAR, KIND_LEAD), (SOURCE_CALENDAR, KIND_START), (SOURCE_TASK, KIND_START),
+    ]
+    soon = ReminderItem(SOURCE_TASK, "7", "call mum", NOW + timedelta(minutes=5))   # created at short notice: still no heads-up
+    assert [r.kind for r in rp.plan([soon], NOW, rules, set())] == [KIND_START]
+
+
+class FakeTts:
+    sample_rate = 22050
+
+    def __init__(self, chunks=(b"\x00\x01",)):
+        self.chunks, self.said = chunks, []
+
+    async def synthesize(self, text, voice=None):
+        self.said.append(text)
+        for c in self.chunks:
+            yield c
+
+
+class FakePlayback:
+    def __init__(self):
+        self.started, self.played = 0, []
+
+    def start(self):
+        self.started += 1
+
+    def play_pcm(self, pcm, rate):
+        self.played.append((pcm, rate))
+
+    def wait_done(self, timeout):
+        return True
+
+    def stop(self):
+        pass
+
+
+def test_the_standalone_speaker_plays_the_voice_and_says_busy_while_speaking():
+    from service.reminders.standalone_speaker import StandaloneSpeaker
+
+    tts, playback = FakeTts(), FakePlayback()
+    speaker = StandaloneSpeaker(tts, playback)
+    assert speaker.available() and not speaker.is_busy()
+    assert asyncio.run(speaker.announce("Reminder: Call mum is due now.")) is True
+    assert tts.said == ["Reminder: Call mum is due now."] and playback.played == [(b"\x00\x01", 22050)] and not speaker.is_busy()
+
+    async def overlapping():
+        speaker._speaking = True
+        return await speaker.announce("second")
+
+    assert asyncio.run(overlapping()) is False and tts.said == ["Reminder: Call mum is due now."]   # busy: not spoken, retried later
+
+
+def test_the_announcer_speaks_through_the_standalone_speaker_and_marks_the_reminder_said():
+    from service.reminders.standalone_speaker import StandaloneSpeaker
+
+    class Ledger:
+        def __init__(self):
+            self.fired = []
+
+        def mark_fired(self, keys, at):
+            self.fired += list(keys)
+
+    tts, ledger, feed = FakeTts(), Ledger(), ReminderFeed()
+    announcer = ReminderAnnouncer(ledger, feed, StandaloneSpeaker(tts, FakePlayback()), ReminderRules(), clock=lambda: NOW)
+    item = ReminderItem(SOURCE_TASK, "6", "get bike from service", NOW)
+    announcer.submit([Reminder(rp.reminder_key(item, KIND_START), item, KIND_START, 0, NOW)])
+    asyncio.run(announcer.drain())
+    assert tts.said == ["Reminder: get bike from service is due now."] and len(ledger.fired) == 1

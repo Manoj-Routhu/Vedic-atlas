@@ -41,6 +41,7 @@ CONTENT_TASKS = {
     "summarise": ("content_summarise", "DOCUMENT"),
     "draft_reply": ("content_draft_reply", "DOCUMENT"),
     "extract": ("content_extract", "DOCUMENT"),
+    "advise": ("content_advise", "TOOL RESULT"),   # a reasoned answer from verified results; narrate itself forbids advice
 }
 
 

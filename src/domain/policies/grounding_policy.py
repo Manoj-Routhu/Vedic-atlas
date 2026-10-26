@@ -32,6 +32,19 @@ def _numbers(text: str) -> list[float]:
     return out
 
 
+# A measurement ("34 degrees", "60%", "12 km/h"). The chat half of a mixed turn starts before the tool result exists, so
+# it may only answer what needs no tool; free numbers are fine ("7 times 8 is 56"), but a measurement in it can only be
+# an invented tool fact. This reads the model's OUTPUT, never the user's message.
+_MEASUREMENT_RE = re.compile(
+    r"\d[\d,]*(?:\.\d+)?\s*(?:°|%|degrees?\b|percent\b|celsius\b|fahrenheit\b|km/?h\b|mph\b|mm\b|humidity\b)",
+    re.IGNORECASE,
+)
+
+
+def states_a_measurement(reply: str) -> bool:
+    return bool(_MEASUREMENT_RE.search(reply or ""))
+
+
 def ungrounded_numbers(reply: str, sources: Iterable[str]) -> list[float]:
     """Numbers in `reply` that no source contains (within rounding)."""
     allowed = [n for src in sources for n in _numbers(src)]

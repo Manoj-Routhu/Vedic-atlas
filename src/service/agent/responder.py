@@ -77,6 +77,13 @@ class ResponderAgent(LLMAgent):
         self._chat_budget = chat_budget_tokens
         self._turn_chars = history_turn_chars
 
+    _TOOL_HALF_PREDICT = 40   # mixed turn: no room to editorialise about the tool half, and it finishes sooner
+
+    def _budget(self, ctx: AgentContext) -> dict:
+        if ctx.metadata.get("tool_half_pending"):
+            return {"num_predict": self._TOOL_HALF_PREDICT}
+        return super()._budget(ctx)
+
     def build_system_prompt(self, ctx: AgentContext) -> str:
         # Persona only: byte-identical every turn so the backend's KV prefix
         # cache is reused. Volatile context lives in build_prompt — PERF_BRIEF §5.2.
@@ -116,6 +123,11 @@ class ResponderAgent(LLMAgent):
             tail.append(
                 "DELIVERY: this request arrived via voice — keep the reply to one or two "
                 "short sentences, zero lists, nothing the user wouldn't hear in one breath."
+            )
+        if ctx.metadata.get("tool_half_pending"):
+            tail.append(
+                "NOTE: another part of this message is being handled separately. Answer only the rest. "
+                "Do not mention that other part and do not answer it yourself."
             )
         tail.append(f"USER: {ctx.user_message}")
         tail.append("Respond directly to the user. Be concise and conversational.")
@@ -256,6 +268,8 @@ class ResponderAgent(LLMAgent):
         return "\n\n".join(blocks)
 
     async def on_completion(self, ctx: AgentContext, response: str) -> None:
+        if ctx.metadata.get("skip_persist"):   # the orchestrator saves ONE combined turn for a mixed reply
+            return
         # Saved history is replayed into later prompts; a filler line left in it gets copied into every reply.
         response = self._vet(strip_filler(response))
         if not response:

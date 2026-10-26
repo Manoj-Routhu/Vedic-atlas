@@ -2,3 +2,14 @@ proactivity: medium
 debounce_window_sec: 30.0
 rate_limit_max: 6
 rate_limit_window_sec: 60.0
+
+# The sensor in the user's own room (docs/12 P5). The reading is held in memory (latest value only) and read by the chat
+# prompt and the get_room_temperature tool; a reading older than max_age_sec counts as absent.
+room:
+  enabled: true           # false removes the tool from the control prompt entirely
+  driver: auto            # auto: the real DHT11 when its library is installed (the Pi after setup_pi.sh), else the mock | mock | dht11
+  gpio_pin: 4             # BCM number of the DHT11 data pin (dht11 driver)
+  poll_interval_sec: 300
+  max_age_sec: 1800
+  mock_temperature_c: 28.0
+  mock_humidity_pct: 55.0

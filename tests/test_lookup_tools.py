@@ -332,10 +332,10 @@ def test_every_manifest_is_small_and_consistent():
         "tasks", "get_weather", "get_weather_forecast", "convert_currency", "web_search", "remember",
         "app_control", "volume_control", "device_status",
         "gmail_search", "gmail_read", "gmail_draft", "gmail_send", "calendar_agenda",
-        "calendar_create", "current_time",
+        "calendar_create", "current_time", "get_room_temperature", "music_control",
     }
     for m in MANIFESTS.values():
-        assert 1 <= len(m.examples) <= 6
+        assert 1 <= len(m.examples) <= 8
         if m.requires_online:
             assert m.hosts
             assert m.private or m.cache_ttl_sec > 0   # a public lookup is cached; the user's mail and calendar never are

@@ -63,16 +63,74 @@ vedic-atlas/
 
 ## Getting Started
 
-### Prerequisites
-- Python 3.10+
+### 1. First-time setup (run once after cloning)
 
-### Setup & Run
-`run.bat` (Windows) and `./run.sh` (Linux/macOS) start the `veda` CLI. With no arguments
-it opens the REPL and starts the local server (the voice loop runs inside it) if one is not
-already running. `veda server` runs the server on its own.
+One script per platform installs everything Veda needs, downloads the models, and checks the result. Both are safe to
+re-run: each step skips work that is already done.
 
-Copy `.env.example` to `.env` and set `VEDA_PROFILE` to choose a run profile from
-`config/profiles/`.
+| | Windows laptop | Raspberry Pi (64-bit Raspberry Pi OS) |
+|---|---|---|
+| Run | `powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1` | `bash scripts/setup_pi.sh` |
+| Options | `-DryRun`, `-Model 0.6b\|1.7b\|4b`, `-SkipModels`, `-SkipMpv`, `-SkipLlamaRebuild` | `--dry-run`, `--model 0.6b\|1.7b\|4b`, `--skip-apt`, `--skip-models`, `--skip-hardware` |
+
+What the scripts install, so nothing is left to run by hand:
+
+| Part | Windows (`setup_windows.ps1`) | Raspberry Pi (`setup_pi.sh`) |
+|---|---|---|
+| Python environment `.venv` + `pip install -e .` | yes (needs Python 3.12+) | yes |
+| Language-model library `llama-cpp-python` | **built with AVX2/FMA** if Visual Studio Build Tools are present (otherwise the generic wheel, which is 3-6x slower, with the one-line fix printed) | compiled natively by pip (10-30 min) |
+| Models in `data/` (language model, speech-to-text, memory) | downloaded, resumable | downloaded, resumable, plus the Piper voice |
+| Wake-word helper files (inside the `openwakeword` package) | downloaded | downloaded |
+| **Music**: `yt-dlp` (finds the song) | installed by `pip install -e .` | installed by `pip install -e .` |
+| **Music**: `mpv` (plays it) | `winget install shinchiro.mpv` | `apt install mpv` |
+| **Reminders** (spoken) | nothing extra: they use the same voice as replies | nothing extra |
+| **Room temperature**: DHT11 libraries | not needed (mock sensor) | GPIO + DHT11 libraries, best effort |
+| Bluetooth tools | not needed | `apt install bluez` |
+| `.env` from `.env.example` | yes | yes |
+
+Then there is no configuration to switch on: music turns itself on when `mpv` and `yt-dlp` are both found (and
+`privacy.online.enabled` is true), the room sensor uses the real DHT11 only when its library is installed
+(`sensing.room.driver: auto`), and `veda` logs what it found or is missing at startup.
+
+**What you still do by hand (these cannot be automated):**
+
+1. Copy your trained wake-word model into `data/models/openwakeword/`: `hey_veda.onnx` **and** `hey_veda.onnx.data`.
+   Until it is there the voice loop stays off on purpose (typing still works: chat, reminders, music).
+2. Put your keys in `.env`: `TAVILY_API_KEY` for web search; for mail and calendar the Google client id/secret, then run
+   `veda login` once (`veda login --manual` on a Pi without a browser).
+3. **Raspberry Pi only:** pair the Bluetooth speaker once (`bluetoothctl`: `scan on`, `pair <MAC>`, `trust <MAC>`,
+   `connect <MAC>`) and make it the default output; wire the mute switch (`privacy.mute_gpio_pin`, default BCM 17) and the
+   DHT11 data pin (`sensing.room.gpio_pin`, default BCM 4).
+4. A non-default model needs its profile, e.g. `VEDA_PROFILE=qwen3-1.7b` in `.env` (the 4B model needs none).
+
+### 2. Run
+
+`run.bat` (Windows) and `./run.sh` (Linux/macOS) start the `veda` CLI. With no arguments it opens the REPL and starts
+the local server (the voice loop runs inside it) if one is not already running. `veda server` runs the server on its own.
+The microphone starts muted: type `/unmute`. `/mute` closes it again (and stops any music).
+
+Try: `play Tum Hi Ho` - `remind me at 6 pm to call the bank` - `is it hot in here` - `should I bring an umbrella tomorrow`.
+
+### 3. Music, reminders and the room sensor (what to expect)
+
+- **Music** (`config/music.yaml`): songs are found on YouTube with `yt-dlp` and played with `mpv`. This is the one
+  documented exception to the network allow-list (only the search words leave the device). While a song plays the
+  microphone is closed; the mute switch, `/mute` and `/unmute` stop it, and it also stops when it ends or after 5 minutes.
+- **Reminders**: "remind me at 6 pm to ..." stores a task with a time and speaks it once, at that time (calendar events
+  also get a 15-minute heads-up). They are spoken even when the voice loop is off, and wait for a reply or a song to
+  pause first.
+- **Room temperature** (`config/sensing.yaml`): "is it hot in here" reads the DHT11 on the Pi; a laptop reports the fixed
+  mock values (28 C, 55%).
+
+### 4. Tests and checks
+
+```
+pytest -q --ignore=tests/test_vector_store.py            # unit tests, no model needed (about 30 s)
+powershell scripts\run_regression.ps1 -Tag mycheck       # unit tests + the router evals on the real model (about 45 min)
+```
+
+`pytest` is installed with `pip install -e .[dev]`. Stop the Veda server before running the evals: they load their own
+copy of the model.
 
 ## Phone app
 

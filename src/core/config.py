@@ -20,7 +20,7 @@ from core.env import load_env
 from schemas.config_schemas import AppConfig
 
 _SECTION_FILES = (
-    "app", "inference", "embedding", "audio", "sensing", "reminders", "privacy",
+    "app", "inference", "embedding", "audio", "sensing", "reminders", "music", "privacy",
     "governance", "guardrails", "agents", "prompting", "skills", "devices", "vision",
 )
 

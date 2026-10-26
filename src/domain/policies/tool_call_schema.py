@@ -37,7 +37,9 @@ def tool_args_schema(manifest: ToolManifest) -> dict[str, Any]:
     return schema
 
 
-CONTROL_KEYS = ("needs_live_data", "calls", "clarification")   # emission order; the flag is decoded BEFORE the calls
+CONTROL_KEYS = ("needs_live_data", "calls", "advise", "also_chat", "clarification")   # emission order; the flag is decoded BEFORE the calls
+# Optional keys: absent costs nothing. An always-present key measured ~2 s a turn, so these are never in `required`.
+OPTIONAL_KEYS = ("advise", "also_chat", "clarification")
 CLARIFICATION_MAX_CHARS = 200
 
 
@@ -45,8 +47,9 @@ def build_control_schema(
     manifests: list[ToolManifest], *, max_calls: int = MAX_CALLS, key_order: tuple[str, ...] = CONTROL_KEYS
 ) -> dict[str, Any]:
     """JSON-schema for the unified control decode:
-    `{"needs_live_data": bool, "calls": [...]}` plus an OPTIONAL `"clarification": str` that the model writes only
-    when it is asking a question. Decode time is ~0.35 s per output token on the target CPU, so an always-present
+    `{"needs_live_data": bool, "calls": [...]}` plus OPTIONAL `"advise": bool` (the tool's own sentence would not answer
+    the question), `"also_chat": bool` (part of the message needs no tool) and `"clarification": str` (written only
+    when asking a question). Decode time is ~0.35 s per output token on the target CPU, so an always-present
     `"clarification":null` cost about 2 s on nearly every turn.
 
     `calls` may be empty (minItems 0) and is NEVER forced to hold one: forcing a call is what turned a mention
@@ -71,12 +74,14 @@ def build_control_schema(
     props = {
         "needs_live_data": {"type": "boolean"},
         "calls": calls,
+        "advise": {"type": "boolean"},
+        "also_chat": {"type": "boolean"},
         "clarification": {"type": "string", "maxLength": CLARIFICATION_MAX_CHARS},
     }
     return {
         "type": "object",
         "properties": {k: props[k] for k in key_order},
-        "required": [k for k in key_order if k != "clarification"],   # optional: absent = not asking (saves ~5 tokens a turn)
+        "required": [k for k in key_order if k not in OPTIONAL_KEYS],   # optional: absent = not asking / not set (saves ~5 tokens a turn each)
         "additionalProperties": False,
     }
 

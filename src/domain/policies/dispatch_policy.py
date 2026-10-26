@@ -3,10 +3,11 @@
 Table (first match wins):
 
   invalid output, or calls that name no real tool        -> FAIL_CLOSED  fixed apology, nothing runs
-  calls non-empty                                        -> TOOLS        (clarification is ignored)
-  ... and several calls with any destructive one         -> CLARIFY      one step at a time
-  ... and any call whose target argument is only a pronoun/ordinal/filler -> CLARIFY   ask which one; nothing runs
-  ... and a destructive call whose target the user never named -> CLARIFY  ask which one; nothing runs
+  calls non-empty                                        -> TOOLS        the model's own clarification, if any, is asked AFTER the tool answer
+  ... a destructive call in a multi-call is HELD (never runs; the user is asked to say it on its own)
+  ... a call whose target argument is only a pronoun/ordinal/filler is HELD (asks which one)
+  ... a destructive call whose target the user never named is HELD (asks which one)
+      the other calls still run and the question follows their answer; when EVERY call is held -> CLARIFY, nothing runs
   calls empty, clarification text                        -> CLARIFY      ask, no further model call
   calls empty, needs_live_data is True                   -> REFUSE       fixed refusal, NEVER free chat
   otherwise                                              -> CHAT         (needs_live_data False, or no flag)
@@ -30,6 +31,7 @@ REFUSAL_REPLY = "I can't look that up right now."
 UNPARSEABLE_REPLY = "Sorry, I didn't catch that. Could you say it again?"
 ONE_AT_A_TIME_REPLY = "I'll do that one step at a time. What should I do first?"
 TARGET_REQUIRED_REPLY = "Which one do you mean?"
+SEPARATELY_REPLY = "I'll handle the other request on its own. Please say it again by itself."   # asked after the rest ran
 
 
 class Route(str, Enum):
@@ -45,6 +47,9 @@ class Resolution:
     route: Route
     calls: tuple[dict, ...] = ()
     text: str = ""    # the reply for CLARIFY / REFUSE / FAIL_CLOSED
+    advise: bool = False       # carried from the decision for TOOLS only; the route table never reads it
+    also_chat: bool = False
+    follow_up: str = ""       # TOOLS only: a question to ask AFTER the tool answer (held calls, or the model's own clarification)
 
 
 def _usable_calls(calls, manifests: Mapping[str, ToolManifest], max_calls: int) -> list[dict]:
@@ -70,15 +75,23 @@ def resolve(
         calls = _usable_calls(decision.calls, manifests, max_calls)
         if not calls:
             return Resolution(Route.FAIL_CLOSED, text=UNPARSEABLE_REPLY)
-        if len(calls) > 1 and any(is_destructive(manifests[c["tool"]], c["args"]) for c in calls):
-            return Resolution(Route.CLARIFY, text=ONE_AT_A_TIME_REPLY)   # destructive tools never join a multi-call
-        if any(target_names_nothing(manifests[c["tool"]], c["args"]) for c in calls):
-            return Resolution(Route.CLARIFY, text=TARGET_REQUIRED_REPLY)   # "mark it as done": a pronoun is not a target
-        if user_message is not None and not all(
-            target_is_explicit(manifests[c["tool"]], c["args"], user_message) for c in calls
-        ):
-            return Resolution(Route.CLARIFY, text=TARGET_REQUIRED_REPLY)   # a guessed or inherited target never runs
-        return Resolution(Route.TOOLS, calls=tuple(calls))
+        multi = len(calls) > 1
+        runnable: list[dict] = []
+        held: list[str] = []   # why each held call did not run
+        for c in calls:
+            m = manifests[c["tool"]]
+            if multi and is_destructive(m, c["args"]):
+                held.append(SEPARATELY_REPLY)           # destructive tools never join a multi-call
+            elif target_names_nothing(m, c["args"]):
+                held.append(TARGET_REQUIRED_REPLY)      # "mark it as done": a pronoun is not a target
+            elif user_message is not None and not target_is_explicit(m, c["args"], user_message):
+                held.append(TARGET_REQUIRED_REPLY)      # a guessed or inherited target never runs
+            else:
+                runnable.append(c)
+        if not runnable:
+            return Resolution(Route.CLARIFY, text=ONE_AT_A_TIME_REPLY if SEPARATELY_REPLY in held else TARGET_REQUIRED_REPLY)
+        follow_up = held[0] if held else (decision.clarification or "").strip()
+        return Resolution(Route.TOOLS, calls=tuple(runnable), advise=decision.advise, also_chat=decision.also_chat, follow_up=follow_up)
 
     question = (decision.clarification or "").strip()
     if question:

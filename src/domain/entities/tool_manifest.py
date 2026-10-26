@@ -68,3 +68,6 @@ class ToolManifest:
     # The result is the user's private content (mail, calendar): it is spoken to them but never written to the trace,
     # the audit log, the tool-call log or the API's skill_calls.
     private: bool = False
+    # The model may ask for a reasoned (advised) reply on this tool's result instead of its own sentence. Default off:
+    # configuration declares what is permitted, the model only chooses within it.
+    allow_advice: bool = False

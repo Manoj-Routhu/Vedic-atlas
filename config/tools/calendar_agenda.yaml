@@ -5,6 +5,7 @@ reply_mode: template        # event titles are spoken as the calendar returned t
 permission_level: auto
 returns: value
 private: true
+allow_advice: true          # the model may ask for a reasoned answer ("umbrella?") instead of the readout
 requires_online: true
 hosts: [www.googleapis.com, oauth2.googleapis.com]
 
