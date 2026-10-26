@@ -77,3 +77,23 @@ export type ProactivityInfo = { level: string; options: string[] };
 
 /** One thing Veda did for a request, for the "Recent activity" list. */
 export type ActivityItem = { id: number; at: string; agent: string; totalMs: number; tools: { name: string; ok: boolean; ms: number }[] };
+
+// ---------- Music (docs/17-music-in-the-app.md) ----------
+
+export type MusicState = 'idle' | 'starting' | 'playing' | 'paused';
+/** Why music is not available on the Pi: switched off in config, the Pi is in offline mode, or mpv / yt-dlp are not installed. */
+export type MusicOffReason = 'off' | 'offline' | 'tools_missing';
+
+export type MusicInfo = {
+  available: boolean;
+  reason: MusicOffReason | null;
+  state: MusicState;
+  /** The song the Pi picked, as it is spoken. */
+  title: string | null;
+  /** Seconds actually played (a pause does not count). Only while playing or paused. */
+  elapsedS: number | null;
+  /** The song stops by itself at this many seconds played. */
+  limitS: number | null;
+  /** The song's own length, when known. */
+  durationS: number | null;
+};

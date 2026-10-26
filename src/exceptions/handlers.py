@@ -46,6 +46,9 @@ _STATUS_BY_CODE: dict[str, int] = {
     ExceptionCode.VISION_UNAVAILABLE: 503,
     ExceptionCode.VISION_BUSY: 429,
     ExceptionCode.IMAGE_INVALID: 422,
+    ExceptionCode.MUSIC_UNAVAILABLE: 503,
+    ExceptionCode.MUSIC_NOT_FOUND: 404,
+    ExceptionCode.MUSIC_NOT_PLAYING: 409,
 }
 
 

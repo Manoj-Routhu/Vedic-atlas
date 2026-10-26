@@ -19,7 +19,7 @@ import time
 from typing import Awaitable, Callable
 
 from core.logging_config import logger
-from domain.entities.music_track import Track
+from domain.entities.music_track import MusicStatus, Track
 from domain.policies.music_policy import clean_query, pick_track
 from domain.ports.music_ports import MusicError, MusicPlayerPort, MusicResolverPort
 
@@ -49,7 +49,11 @@ class MusicService:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._start_task: asyncio.Task | None = None
         self._limit: asyncio.TimerHandle | None = None
-        self._paused_for_speech = False
+        self._paused_for_speech = False     # a reminder is being spoken over the song
+        self._user_paused = False           # the phone (or anyone) pressed Pause
+        self._player_paused = False         # what the player was last told
+        self._elapsed_before = 0.0          # seconds played before the current stretch
+        self._stretch_start: float | None = None   # when the current stretch began; None while paused
 
     # ---- lifecycle ----------------------------------------------------------------------------------------------
 
@@ -73,6 +77,24 @@ class MusicService:
     @property
     def track(self) -> Track | None:
         return self._track
+
+    @property
+    def elapsed_s(self) -> float | None:
+        """Seconds of the song actually played so far (time spent paused is not counted); None unless it is playing."""
+        if self._state != PLAYING:
+            return None
+        running = time.monotonic() - self._stretch_start if self._stretch_start is not None else 0.0
+        return self._elapsed_before + running
+
+    def status(self) -> MusicStatus:
+        if self._state == IDLE or self._track is None:
+            return MusicStatus("idle")
+        if self._state == STARTING:
+            return MusicStatus("starting", title=self._track.title, limit_s=self._max_seconds or None, duration_s=self._track.duration_sec)
+        return MusicStatus(
+            "paused" if self._user_paused else "playing", title=self._track.title, elapsed_s=self.elapsed_s,
+            limit_s=self._max_seconds or None, duration_s=self._track.duration_sec,
+        )
 
     # ---- play / stop --------------------------------------------------------------------------------------------
 
@@ -113,6 +135,8 @@ class MusicService:
             self._limit = None
         was = self._state
         self._state, self._track, self._paused_for_speech = IDLE, None, False
+        self._user_paused = self._player_paused = False
+        self._elapsed_before, self._stretch_start = 0.0, None
         if was != IDLE:
             logger.info(f"[music] stopped ({reason}); the microphone may reopen")
             self._gate.resume_capture(SOURCE)
@@ -122,7 +146,8 @@ class MusicService:
             await self._wait_until_quiet()
             await self._player.start(track.url, self._on_finished)
             self._state = PLAYING
-            self._arm_limit()
+            self._elapsed_before, self._stretch_start = 0.0, time.monotonic()
+            self._arm_limit(self._max_seconds)
             logger.info(f"[music] playing {track.title!r} (limit {self._max_seconds:.0f}s)")
         except asyncio.CancelledError:
             raise
@@ -152,10 +177,13 @@ class MusicService:
             await asyncio.sleep(self._poll)
         logger.warning("[music] Veda stayed busy; starting anyway")
 
-    def _arm_limit(self) -> None:
+    def _arm_limit(self, seconds: float) -> None:
+        if self._limit is not None:
+            self._limit.cancel()
+            self._limit = None
         if self._loop is None or self._max_seconds <= 0:
             return
-        self._limit = self._loop.call_later(self._max_seconds, lambda: asyncio.ensure_future(self.stop("time limit")))
+        self._limit = self._loop.call_later(max(seconds, 0.0), lambda: asyncio.ensure_future(self.stop("time limit")))
 
     # ---- events from outside ------------------------------------------------------------------------------------
 
@@ -169,23 +197,61 @@ class MusicService:
         if self.active and self._loop is not None:
             asyncio.run_coroutine_threadsafe(self.stop("muted" if muted else "unmuted"), self._loop)
 
-    # ---- a reminder is about to be spoken -----------------------------------------------------------------------
+    # ---- pausing: for a spoken reminder, or because the phone asked --------------------------------------------
+
+    async def _sync_player(self) -> bool:
+        """Make the player match what is wanted (paused if a reminder is speaking OR the user paused). False if it failed."""
+        want = self._paused_for_speech or self._user_paused
+        if self._state != PLAYING or want == self._player_paused:
+            return True
+        try:
+            await (self._player.pause() if want else self._player.resume())
+        except Exception as e:
+            logger.warning(f"[music] could not {'pause' if want else 'resume'}: {type(e).__name__}")
+            return False
+        self._player_paused = want
+        now = time.monotonic()
+        if want:   # the clock and the time limit stand still while it is paused
+            if self._stretch_start is not None:
+                self._elapsed_before += now - self._stretch_start
+                self._stretch_start = None
+            if self._limit is not None:
+                self._limit.cancel()
+                self._limit = None
+        else:
+            self._stretch_start = now
+            self._arm_limit(self._max_seconds - self._elapsed_before)
+        return True
 
     async def pause(self) -> None:
+        """Pause for a spoken reminder (MusicAwareSpeaker)."""
         if self._state == PLAYING and not self._paused_for_speech:
-            try:
-                await self._player.pause()
-                self._paused_for_speech = True
-            except Exception as e:
-                logger.warning(f"[music] could not pause: {type(e).__name__}")
+            self._paused_for_speech = True
+            if not await self._sync_player():
+                self._paused_for_speech = False
 
     async def resume(self) -> None:
         if self._state == PLAYING and self._paused_for_speech:
             self._paused_for_speech = False
-            try:
-                await self._player.resume()
-            except Exception as e:
-                logger.warning(f"[music] could not resume: {type(e).__name__}")
+            await self._sync_player()
+
+    async def pause_by_user(self) -> bool:
+        """The phone pressed Pause. False when no song is playing (or the player would not pause)."""
+        if self._state != PLAYING:
+            return False
+        self._user_paused = True
+        if not await self._sync_player():
+            self._user_paused = False
+            return False
+        return True
+
+    async def resume_by_user(self) -> bool:
+        """The phone pressed Play again. False when no song is playing."""
+        if self._state != PLAYING:
+            return False
+        self._user_paused = False
+        await self._sync_player()
+        return True
 
 
 class MusicAwareSpeaker:

@@ -1,4 +1,5 @@
 import { controlCalls } from './controlClient';
+import { musicCalls } from './musicClient';
 import type { PiApi } from './pi';
 import { ApiError, apiErrorFromResponse, apiErrorFromThrown, type ResponseContext } from './errors';
 import { sseEvents, type SseEvent } from './sse';
@@ -171,6 +172,15 @@ export class VedaApi implements PiApi {
   proactivity = (signal?: AbortSignal) => this.control.proactivity(signal);
   setProactivity = (level: string, signal?: AbortSignal) => this.control.setProactivity(level, signal);
   activity = (limit?: number, signal?: AbortSignal) => this.control.activity(limit, signal);
+
+  // ---------- music (mapped in musicClient.ts) ----------
+
+  private readonly music = musicCalls((req, signal) => this.sendJson(req, signal));
+  musicStatus = (signal?: AbortSignal) => this.music.musicStatus(signal);
+  playSong = (query: string, signal?: AbortSignal) => this.music.playSong(query, signal);
+  stopMusic = (signal?: AbortSignal) => this.music.stopMusic(signal);
+  pauseMusic = (signal?: AbortSignal) => this.music.pauseMusic(signal);
+  resumeMusic = (signal?: AbortSignal) => this.music.resumeMusic(signal);
 
   // ---------- streams ----------
 

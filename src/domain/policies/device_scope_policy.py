@@ -45,6 +45,11 @@ _RULES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/api/persona", SCOPE_CONTROL),
     ("GET", "/api/reminders/config", SCOPE_CONTROL),
     ("PUT", "/api/reminders/config", SCOPE_CONTROL),
+    ("GET", "/api/music/status", SCOPE_CONTROL),
+    ("POST", "/api/music/play", SCOPE_CONTROL),   # starts sound in the room, so it is a control action, not chat
+    ("POST", "/api/music/stop", SCOPE_CONTROL),
+    ("POST", "/api/music/pause", SCOPE_CONTROL),
+    ("POST", "/api/music/resume", SCOPE_CONTROL),
     # vision
     ("PUT", "/api/vision/images", SCOPE_VISION),
     ("POST", "/api/vision/ask", SCOPE_VISION),

@@ -8,7 +8,7 @@ from controller.middleware.device_auth import DeviceAuthMiddleware
 from controller.middleware.request_context import request_context
 from controller.routes import (
     admin, approval, config as config_route, devices as devices_route, governance as governance_route,
-    google as google_route, health, knowledge, lookup, persona, privacy, reminders as reminders_route, speakers, stream,
+    google as google_route, health, knowledge, lookup, music, persona, privacy, reminders as reminders_route, speakers, stream,
     tasks as tasks_route, trace as trace_route, vision as vision_route, voice,
 )
 from core.constants import PROJECT_NAME, VERSION
@@ -26,7 +26,7 @@ logger.info(f"{PROJECT_NAME} v{VERSION} application initialized")
 
 for _mod in (
     admin, approval, config_route, devices_route, governance_route,
-    google_route, health, knowledge, lookup, persona, privacy, reminders_route, speakers, stream, tasks_route, trace_route, vision_route, voice,
+    google_route, health, knowledge, lookup, music, persona, privacy, reminders_route, speakers, stream, tasks_route, trace_route, vision_route, voice,
 ):
     app.include_router(_mod.router, prefix="/api")
 

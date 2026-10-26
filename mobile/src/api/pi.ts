@@ -1,11 +1,12 @@
 import type { ControlApi } from './control';
+import type { MusicApi } from './music';
 import type { ChatEvent, ImageInfo, PendingApproval, VisionEvent, VisionStatus, VisionStyle } from './types';
 
 /**
  * What the screens need from "the Pi". The real `VedaApi` implements it, and so does `DemoApi` (canned answers, no network),
  * so no screen has to know whether it is talking to a real Pi.
  */
-export interface PiApi extends ControlApi {
+export interface PiApi extends ControlApi, MusicApi {
   health(signal?: AbortSignal): Promise<void>;
   visionStatus(signal?: AbortSignal): Promise<VisionStatus>;
   putImage(bytes: Uint8Array, mime?: string, signal?: AbortSignal): Promise<ImageInfo>;

@@ -17,7 +17,8 @@ runs on a laptop.
   No internet is used on the vision path, and vision has no access to memory or agents.
 - **Phone app** (`mobile/`): an Android app (Expo / React Native) that pairs with your Pi
   over home Wi-Fi: Look (camera, spoken descriptions, questions), Chat with approvals,
-  Control (mute, tasks, reminders, personality) and Settings. See [Phone app](#phone-app).
+  Music (the phone is the remote; the song plays on the Pi's speaker), Control (mute, tasks,
+  reminders, personality) and Settings. See [Phone app](#phone-app).
 - **Device pairing and access control**: one-time pairing codes, per-device tokens with
   scopes (`chat`, `control`, `vision`, `approve`), revocable with `veda devices revoke`.
   The LAN gate is fail-closed; only loopback is trusted.
@@ -193,6 +194,7 @@ TalkBack, tablet widths) and measuring RAM with both models loaded on a Pi 5 (8 
 Vision and phone app:
 - [`docs/15-vision-mobile-design.md`](docs/15-vision-mobile-design.md): the Pi side: pairing, access scopes, the vision service and its memory guard
 - [`docs/16-mobile-app-design.md`](docs/16-mobile-app-design.md): the Android app: screens, UX, stages, build notes
+- [`docs/17-music-in-the-app.md`](docs/17-music-in-the-app.md): the Music tab: Pi routes, rules (mic closed while playing), screens
 
 Core:
 - [`docs/00-overview.md`](docs/00-overview.md): architecture overview, with the per-layer docs `01` to `06` beside it
