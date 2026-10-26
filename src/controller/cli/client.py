@@ -15,6 +15,7 @@ Donor: veda/cli/client.py, read in full. Changes:
 
 from __future__ import annotations
 
+import atexit
 import os
 import subprocess
 import sys
@@ -34,6 +35,31 @@ _DEFAULT_URL = os.environ.get("VEDA_SERVER_URL", "http://127.0.0.1:8000")
 def _pid_file(port: int) -> Path:
     """Per port, so a server on another port is never mistaken for this one."""
     return Path(__file__).resolve().parents[3] / "data" / f"veda-server-{port}.pid"
+
+
+def register_server(port: int) -> None:
+    """Called by a server this process is about to start in the foreground (`veda server`), before it loads any model.
+
+    Loading takes about a minute and the port is not open until it is done, so without this a `veda` typed meanwhile finds
+    nothing answering and starts a second server (a second copy of every model in memory). With it, `veda` sees a server
+    that is still starting and waits for it. The marker is removed when this process exits.
+    """
+    path = _pid_file(port)
+    pid = os.getpid()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(pid))
+    except OSError:
+        return
+
+    def _clear() -> None:
+        try:
+            if path.read_text().strip() == str(pid):
+                path.unlink()
+        except OSError:
+            pass
+
+    atexit.register(_clear)
 
 
 class CliError(RuntimeError):

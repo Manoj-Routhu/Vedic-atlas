@@ -12,6 +12,7 @@ import socket
 
 import uvicorn
 
+from controller.cli.client import register_server
 from core.config import load_full_config
 from core.constants import PROJECT_NAME, VERSION
 from core.logging_config import logger
@@ -51,6 +52,7 @@ def cmd_server(*, port: int | None = None, host: str = "127.0.0.1") -> int:
             f"Not starting a second one: it would load every model again. Stop that one first, or use its address."
         )
         return 1
+    register_server(use_port)   # so a `veda` typed while the models load waits for this server instead of starting another
     logger.info(f"{PROJECT_NAME} v{VERSION} - Personal AI Assistant")
     logger.info(f"Starting on http://{host}:{use_port}")
     if host not in ("127.0.0.1", "localhost", "::1"):
