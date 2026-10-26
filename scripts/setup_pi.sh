@@ -137,6 +137,7 @@ Options:
   --skip-models      do not download models
   --skip-config      do not edit config/audio.yaml
   --skip-vision      do not download the camera model and llama-server (the phone's Look screen will not work)
+  --skip-hardware    do not install the GPIO / DHT11 libraries (the mute switch and room sensor stay on the software versions)
   --extras LIST      pyproject extras to install, comma separated (e.g. embedding,hotkey)
   --model SIZE       language model to download: 0.6b (fastest), 1.7b, or 4b (default, best answers, slowest)
   -h, --help         this text
