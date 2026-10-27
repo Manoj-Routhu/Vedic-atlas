@@ -14,7 +14,7 @@ noise_suppression_strength: 0.75  # 0 = off, 1 = strongest; targets steady fan/h
 
 tts_engine: auto
 tts_voice: zira
-tts_model_path: null
+tts_model_path: data/models/piper/en_US-lessac-medium.onnx
 
 mic_device_index: 1         # set explicitly after running sounddevice.query_devices()
 speaker_device_index: null

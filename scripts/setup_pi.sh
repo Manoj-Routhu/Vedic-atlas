@@ -256,7 +256,16 @@ install_system_packages() {
     sudo="sudo"
   fi
   run $sudo apt-get update
-  run $sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_PACKAGES[@]}"
+  # apt-listchanges and dpkg-preconfigure (apt hook scripts that only show changelogs / ask debconf questions) segfault on
+  # some Raspberry Pi OS images, which aborts the whole install. None of the packages here need either, so skip them.
+  # The hooks live in /etc/apt/apt.conf.d and apt can only add to them, not clear them, so point this one install at an
+  # empty config directory instead (the main /etc/apt/apt.conf and sources are still used).
+  local apt_conf empty_dir
+  empty_dir="$(mktemp -d)"; apt_conf="$empty_dir/apt.conf"
+  printf 'Dir::Etc::parts "%s";\n' "$empty_dir" > "$apt_conf"
+  run $sudo env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none APT_CONFIG="$apt_conf" \
+    apt-get install -y "${APT_PACKAGES[@]}"
+  rm -rf "$empty_dir"
 }
 
 # ---------------------------------------------------------------- 3. venv + pip install
