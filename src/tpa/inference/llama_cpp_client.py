@@ -43,7 +43,9 @@ def _one_entry_per_system_prompt(llama_cpp, llama, capacity_bytes: int):
     control prefix and the oldest entries - the chat and narrate prefixes - were evicted to make room. A new entry that
     shares the WHOLE system turn with an old one serves every later prompt of that kind just as well, so the old one is
     dropped. "Whole system turn" = the shared prefix holds a second ChatML <|im_start|> (the user turn's); for a model
-    without that token nothing is replaced and the cache behaves as before."""
+    without that token nothing is replaced and the cache behaves as before.
+
+    Entries come from `_lean_save_state`, so they carry no logits copy (see there)."""
     ids = llama.tokenize(b"<|im_start|>", add_bos=False, special=True)
     turn_start = ids[0] if len(ids) == 1 else None
 
@@ -58,6 +60,37 @@ def _one_entry_per_system_prompt(llama_cpp, llama, capacity_bytes: int):
             super().__setitem__(key, value)
 
     return _Cache(capacity_bytes=capacity_bytes)
+
+
+def _lean_save_state(llama_cpp, llama):
+    """Llama.save_state for the prompt cache, without its copies (bound onto the instance).
+
+    The library's version allocates the state (~400 MB for the control prompt), copies it to a compact buffer, then to
+    `bytes`, and also copies the logits buffer (n_batch x n_vocab float32, ~311 MB for Qwen3): ~1.5 GB of RAM for a
+    moment on every call. With the vision model loaded that spike got it OOM-killed (2026-10-27 23:23). Here the state
+    is written once into one buffer, and the logits are one zero row: the cache's size limit never counted them (4
+    entries held ~1.2 GB more than prompt_cache_mb), and restoring an entry sets `_requires_eval`, so llama-cpp-python
+    re-evaluates the last token instead of reading them; the one row broadcasts in load_state's assignment."""
+    import ctypes
+
+    import numpy as np
+
+    def save_state():
+        size = llama_cpp.llama_state_get_size(llama._ctx.ctx)
+        buf = (ctypes.c_uint8 * int(size))()
+        n = int(llama_cpp.llama_state_get_data(llama._ctx.ctx, buf, size))
+        if n > int(size):
+            raise RuntimeError("Failed to copy llama state data")
+        return llama_cpp.llama.LlamaState(
+            scores=np.zeros((1, llama._n_vocab), dtype=np.single),
+            input_ids=llama.input_ids.copy(),
+            n_tokens=llama.n_tokens,
+            llama_state=buf,   # load_state copies the first `llama_state_size` bytes out of it
+            llama_state_size=n,
+            seed=llama._seed,
+        )
+
+    return save_state
 
 
 class LlamaCppClient:
@@ -90,6 +123,7 @@ class LlamaCppClient:
             # The context only reuses its KV cache when consecutive prompts share a start. Veda alternates between
             # chat, routing and tool-call prompts, each with a long fixed prefix, so every call re-read its whole
             # prompt. A RAM cache of evaluated prefixes lets each prompt type reuse its own prefix.
+            self._llama.save_state = _lean_save_state(llama_cpp, self._llama)
             self._llama.set_cache(_one_entry_per_system_prompt(llama_cpp, self._llama, prompt_cache_mb * 1024 * 1024))
         self._timeout = timeout
         self._num_predict = num_predict

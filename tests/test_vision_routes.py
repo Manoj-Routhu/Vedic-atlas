@@ -160,6 +160,18 @@ def test_a_cold_model_announces_loading_first(port, client):
     assert events(r.text)[0] == {"type": "status", "state": "loading"}
 
 
+def test_a_quiet_model_gets_keepalive_events_so_the_app_does_not_give_up(port, client, monkeypatch):
+    # The app drops a stream after 120 s without an event; a first photo on the Pi can be quiet for longer than that.
+    from controller.routes import vision as vision_routes
+
+    monkeypatch.setattr(vision_routes, "_KEEPALIVE_S", 0.05)
+    port.chunk_delay = 0.3
+    evs = events(client.post("/api/vision/ask", json={"image_id": upload(client)}).text)
+    assert {"type": "status", "state": "working"} in evs
+    assert [e["text"] for e in evs if e["type"] == "token"] == ["A red ", "apple."]   # the reply is untouched
+    assert evs[-1] == {"type": "done"}
+
+
 def test_a_follow_up_question_reaches_the_model(port, client):
     image_id = upload(client)
     client.post("/api/vision/ask", json={"image_id": image_id, "question": "Is it ripe?"})

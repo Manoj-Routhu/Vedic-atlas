@@ -101,6 +101,7 @@ class Harness:
     async def _sleep(self, seconds):
         self.sleeps.append(seconds)
         self.clock.t += seconds
+        await asyncio.sleep(0)   # a real await, so another task (or a cancel) can run in between
 
     async def use(self):
         async with self.manager.session() as url:
@@ -173,6 +174,25 @@ def test_waits_until_the_server_reports_healthy(h):
     h.health_script = [False, False, False, True]
     run(h.use())
     assert len(h.sleeps) == 3
+
+
+def test_a_photo_after_a_cancelled_start_waits_for_the_model_instead_of_using_it_mid_load(h):
+    # The first request goes away while the model loads (the phone gave up); the process keeps loading.
+    async def scenario():
+        h.health_script = [False] * 50
+        first = asyncio.ensure_future(h.use())
+        while len(h.sleeps) < 2:
+            await asyncio.sleep(0)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        h.health_script = [False, False, True]   # still loading for two more polls
+        sleeps_before = len(h.sleeps)
+        await h.use()
+        return len(h.sleeps) - sleeps_before
+
+    assert run(scenario()) == 2   # it waited for health...
+    assert len(h.procs) == 1      # ...on the same process, not a second one
 
 
 def test_ipv6_loopback_url_is_bracketed(tmp_path):

@@ -317,6 +317,38 @@ def test_cancel_stops_the_stream_and_the_server_sees_the_disconnect(llama):
     assert llama.disconnected.wait(timeout=3)   # llama-server was told to stop generating
 
 
+def test_a_request_cancelled_mid_reply_leaves_no_unretrieved_task(llama):
+    # The phone going away cancels the request while the adapter waits for the next line; the stream then closes
+    # under that pending read, which fails with ReadError. It must be cleaned up, not left for asyncio to print as
+    # "Task exception was never retrieved".
+    import gc
+
+    llama.chunks = [f"word{i} " for i in range(200)]
+    llama.chunk_delay = 0.2
+    adapter, _ = make(llama)
+    leaked = []
+
+    async def go():
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, ctx: leaked.append(ctx.get("message")))
+        first = asyncio.Event()
+
+        async def request():
+            async for _chunk in adapter.describe(b"x", "image/jpeg", "p", cancel=asyncio.Event()):
+                first.set()
+
+        task = asyncio.ensure_future(request())
+        await first.wait()
+        await asyncio.sleep(0.05)   # now waiting on the next line
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0.5)   # let the closed connection fail any read still pending
+        gc.collect()
+        await asyncio.sleep(0)
+
+    run(go())
+    assert leaked == []
+
+
 def test_after_a_cancel_the_adapter_waits_until_the_model_is_idle(llama):
     """Image encoding cannot be interrupted: the old photo is still being processed after the client left."""
     llama.chunks = [f"w{i} " for i in range(500)]

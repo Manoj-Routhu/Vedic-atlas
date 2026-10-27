@@ -8,7 +8,8 @@ Two requests rather than one multipart upload: no multipart spooling to disk, a 
 follow-up questions about the same photo without uploading it again.
 
 SSE events are JSON in `data:` lines: {"type": "status", "state": "loading"} (the model is being started, the first
-reply takes a while), {"type": "token", "text": ...}, {"type": "done"}, {"type": "error", "code": ..., "message": ...}.
+reply takes a while), {"type": "status", "state": "working"} (a keep-alive while the model is quiet), {"type": "token",
+"text": ...}, {"type": "done"}, {"type": "error", "code": ..., "message": ...}.
 A second photo while one is running gets 429 with Retry-After before any stream starts.
 """
 
@@ -34,6 +35,9 @@ from service.vision.vision_service import VisionService
 router = APIRouter()
 
 _RETRY_AFTER_S = "5"
+# The app gives up on a stream that sends no EVENT for 120 s (SSE comments do not count). On the Pi a first photo can take
+# 80 s to load the model plus 70 s to its first word, so say "still working" well inside that.
+_KEEPALIVE_S = 15.0
 
 
 def _event(**fields) -> str:
@@ -75,15 +79,17 @@ async def ask(req: AskRequest, request: Request, service: VisionService = Depend
     except Exception:
         loading = False
 
+    pending: list[asyncio.Future] = []   # the stream's next item, while _with_keepalive waits on it
+
     async def events():
         watcher = asyncio.create_task(watch_disconnect(request, cancel))
         try:
             if loading:
                 yield _event(type="status", state="loading")
-            async for text in stream:
+            async for text in _with_keepalive(stream, pending):
                 if cancel.is_set():
                     break
-                yield _event(type="token", text=text)
+                yield _event(type="token", text=text) if text is not None else _event(type="status", state="working")
             if not cancel.is_set():
                 yield _event(type="done")
         except AppException as e:
@@ -94,11 +100,29 @@ async def ask(req: AskRequest, request: Request, service: VisionService = Depend
         finally:
             cancel.set()
             watcher.cancel()
+            for t in pending:   # a read still waiting must finish before the stream can be closed
+                t.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await watcher
+                await asyncio.gather(watcher, *pending, return_exceptions=True)
             await stream.aclose()   # frees the one-photo-at-a-time slot, after the model has really stopped
 
     return sse_response(events())
+
+
+async def _with_keepalive(stream, pending: list):
+    """The stream's items, with None whenever it has been quiet for _KEEPALIVE_S. The read in progress is kept in
+    `pending` so the caller can cancel it on the way out (it runs as its own task)."""
+    it = stream.__aiter__()
+    while True:
+        nxt = asyncio.ensure_future(it.__anext__())
+        pending[:] = [nxt]
+        while not (await asyncio.wait({nxt}, timeout=_KEEPALIVE_S))[0]:
+            yield None
+        pending.clear()
+        try:
+            yield nxt.result()
+        except StopAsyncIteration:
+            return
 
 
 @router.get("/vision/status", response_model=VisionStatusResponse)

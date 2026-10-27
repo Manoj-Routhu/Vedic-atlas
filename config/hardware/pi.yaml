@@ -6,7 +6,8 @@ vision:
   image_max_edge_px: 768
   image_max_tokens: 384
   use_mmap: false           # model held once, not twice: 3.3 GB -> 2.5 GB after an image (measured 2026-10-27)
-  min_headroom_mb: 2600     # its measured peak (2.5 GB) plus a margin; 3000 refused once the main model's prompt cache filled
+  n_ctx: 2048               # a photo question is ~440 tokens (384 image + prompt + answer); 4096 only reserved RAM. 2.48 -> 2.25 GB
+  min_headroom_mb: 2200     # ~ its measured peak (2.25 GB); with Veda running ~2.39 GB is free, and 2 GB swap covers the rest (2026-10-27)
 devices:
   lan_enabled: true         # `veda` and `veda --restart` listen for paired phones on the home network (tokens still gate every route)
 inference:

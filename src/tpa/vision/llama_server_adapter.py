@@ -114,6 +114,7 @@ class LlamaServerVisionAdapter:
         tokens = 0
         deadline = began + self._cfg.request_timeout_s
         cancel_wait = asyncio.ensure_future(cancel.wait())
+        next_line: asyncio.Future | None = None
         try:
             async with client.stream("POST", f"{base_url}/v1/chat/completions", json=body) as resp:
                 if resp.status_code != 200:
@@ -150,8 +151,12 @@ class LlamaServerVisionAdapter:
             logger.error(f"[vision] could not talk to the model server: {type(e).__name__}")
             raise _unavailable("the vision model is not responding", _Gone) from None
         finally:
-            cancel_wait.cancel()
-            await asyncio.gather(cancel_wait, return_exceptions=True)
+            # The pending line read too: when the caller stops early (the phone went away), the stream closes under it
+            # and it fails with ReadError; left alone, asyncio printed "Task exception was never retrieved".
+            pending = [t for t in (cancel_wait, next_line) if t is not None]
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
             if first_token_at is not None:
                 total = time.perf_counter() - began
                 logger.info(f"[vision] reply: first token {first_token_at - began:.1f}s, total {total:.1f}s, {tokens} chunks")

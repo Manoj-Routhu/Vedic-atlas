@@ -69,7 +69,7 @@ def test_pi_overlay_limits_vision_and_turns_off_mmap(monkeypatch):
     monkeypatch.setenv("VEDA_DEVICE", "pi")
     cfg = config.load_full_config()
     assert cfg.vision.n_threads == 2 and cfg.vision.image_max_edge_px == 768
-    assert cfg.vision.use_mmap is False and cfg.vision.min_headroom_mb == 2600
+    assert cfg.vision.use_mmap is False and cfg.vision.min_headroom_mb == 2200 and cfg.vision.n_ctx == 2048
     assert cfg.inference.prompt_cache_mb == 768 and cfg.inference.use_mmap is False
 
 

@@ -82,6 +82,7 @@ class VisionProcessManager:
 
         self._proc = None
         self._loaded = False
+        self._started_at = 0.0
         self._in_use = 0
         self._last_used: float | None = None
         self._lock = asyncio.Lock()
@@ -160,7 +161,13 @@ class VisionProcessManager:
 
     async def _ensure_running(self) -> None:
         async with self._lock:
+            if self._alive() and self._loaded:
+                return
             if self._alive():
+                # A start whose caller went away (the phone gave up, the request was cancelled) left the process
+                # loading. Without this the next photo was sent to it mid-load and got HTTP 503 "Loading model".
+                logger.info("[vision] the model is still loading from an earlier request; waiting for it")
+                await self._wait_until_healthy()
                 return
             if self._proc is not None:   # it was running and is gone: crashed or killed from outside
                 logger.warning(f"[vision] the model process exited (code {self._proc.poll()}); it will be restarted")
@@ -228,9 +235,12 @@ class VisionProcessManager:
             logger.error(f"[vision] could not start llama-server: {e}")
             raise _unavailable("the vision model could not be started") from None
         self._pidfile.write_text(str(self._proc.pid), encoding="utf-8")
+        self._started_at = self._clock()
+        await self._wait_until_healthy()
 
-        deadline = self._clock() + self._cfg.startup_timeout_s
-        began = self._clock()
+    async def _wait_until_healthy(self) -> None:
+        began = self._started_at
+        deadline = began + self._cfg.startup_timeout_s
         while True:
             if self._proc.poll() is not None:
                 logger.error(f"[vision] llama-server exited during startup (code {self._proc.poll()}):\n{self._log_tail()}")
