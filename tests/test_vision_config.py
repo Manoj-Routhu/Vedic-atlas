@@ -65,16 +65,17 @@ def test_laptop_overlay_sets_the_binary_and_threads(monkeypatch):
     assert cfg.n_threads == 6
 
 
-def test_pi_overlay_limits_vision_and_the_main_models_prompt_cache(monkeypatch):
+def test_pi_overlay_limits_vision_and_turns_off_mmap(monkeypatch):
     monkeypatch.setenv("VEDA_DEVICE", "pi")
     cfg = config.load_full_config()
     assert cfg.vision.n_threads == 2 and cfg.vision.image_max_edge_px == 768
-    assert cfg.inference.prompt_cache_mb == 128   # base value is 768
+    assert cfg.vision.use_mmap is False and cfg.vision.min_headroom_mb == 2600
+    assert cfg.inference.prompt_cache_mb == 768 and cfg.inference.use_mmap is False
 
 
 def test_overlay_does_not_touch_the_base_when_unset():
     cfg = config.load_full_config()
-    assert cfg.inference.prompt_cache_mb == 768
+    assert cfg.inference.prompt_cache_mb == 768 and cfg.inference.use_mmap is True
     assert cfg.vision.n_threads is None
 
 
@@ -83,7 +84,7 @@ def test_hardware_overlay_merges_after_the_model_profile(monkeypatch):
     monkeypatch.setenv("VEDA_DEVICE", "pi")
     cfg = config.load_full_config()
     assert "0.6B" in cfg.inference.model_path   # the model profile still applies
-    assert cfg.inference.prompt_cache_mb == 128   # and the machine overlay on top of it
+    assert cfg.inference.use_mmap is False   # and the machine overlay on top of it
 
 
 def test_unknown_device_fails_loudly(monkeypatch):

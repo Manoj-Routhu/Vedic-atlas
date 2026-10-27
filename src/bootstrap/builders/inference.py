@@ -42,6 +42,7 @@ def build_inference(cfg: AppConfig, governance, lock: asyncio.Lock | None = None
         think=icfg.think,
         timeout=icfg.timeout,
         prompt_cache_mb=icfg.prompt_cache_mb,
+        use_mmap=icfg.use_mmap,
         model_lock=thread_lock,
     )
     on_success = (lambda name: governance.record_success(name)) if governance else None

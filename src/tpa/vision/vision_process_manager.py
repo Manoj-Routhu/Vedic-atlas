@@ -215,6 +215,8 @@ class VisionProcessManager:
         ]
         if c.n_threads:
             cmd += ["-t", str(c.n_threads)]
+        if not c.use_mmap:
+            cmd += ["--load-mode", "none"]
         return cmd
 
     async def _start_process(self) -> None:

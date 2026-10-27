@@ -33,6 +33,7 @@ def build_inference_client(
     think: bool = False,
     timeout: float = 120.0,
     prompt_cache_mb: int = 0,
+    use_mmap: bool = True,
     model_lock=None,
 ) -> InferencePort:
     backend = backend.lower().strip()
@@ -72,6 +73,7 @@ def build_inference_client(
             num_predict=num_predict,
             think=think,
             prompt_cache_mb=prompt_cache_mb,
+            use_mmap=use_mmap,
             model_lock=model_lock,
         )
 

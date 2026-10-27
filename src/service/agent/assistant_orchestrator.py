@@ -430,12 +430,25 @@ class AssistantOrchestrator(BaseAgent):
     # ---- public -------------------------------------------------------------
 
     async def warmup(self) -> None:
-        """One throw-away decode so the control prefix is already in the prompt cache for the first real turn."""
+        """Throw-away decodes so each fixed prompt prefix (control, chat, narrate) is already in the prompt cache for
+        the first real turn. Each is warmed on its own: one failing does not skip the others."""
         try:
             await self._decoder.decide("hello", (), "")
             logger.info("[assistant] control prefix warmed")
         except Exception as e:
             logger.warning(f"[assistant] warmup skipped: {e}")
+        # Chat and narrate prompts straight to the client, one token each: nothing is saved to the conversation.
+        chat_ctx = AgentContext(user_message="hello", from_voice=True)
+        narrate = self._composer.narrate_stage("hello", ["ok"])
+        for stage, system, prompt in (
+            ("chat", self._responder.build_system_prompt(chat_ctx), self._responder.build_prompt(chat_ctx)),
+            ("narrate", narrate.system, narrate.prompt),
+        ):
+            try:
+                await self._client.complete(prompt=prompt, system=system, model=self.model, num_predict=1)
+                logger.info(f"[assistant] {stage} prefix warmed")
+            except Exception as e:
+                logger.warning(f"[assistant] {stage} warmup skipped: {e}")
 
 
     async def execute(self, ctx: AgentContext) -> AgentResult:

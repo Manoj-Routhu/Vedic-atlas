@@ -154,6 +154,13 @@ def test_command_line(h):
         assert cmd[cmd.index(flag) + 1] == value, flag
     assert "--no-webui" in cmd and "--mmproj" in cmd and "-m" in cmd
     assert "-t" not in cmd   # threads unset: llama.cpp decides
+    assert "--load-mode" not in cmd   # mmap on by default
+
+
+def test_mmap_can_be_turned_off(tmp_path):
+    h = Harness(tmp_path, use_mmap=False)
+    run(h.use())
+    assert h.commands[0][h.commands[0].index("--load-mode") + 1] == "none"
 
 
 def test_threads_are_passed_when_configured(tmp_path):

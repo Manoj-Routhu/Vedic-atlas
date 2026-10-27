@@ -152,6 +152,7 @@ class VoiceSession:
         self._stop.clear()
         self._speaker.start()
         self._task = asyncio.create_task(self._run(), name="VoiceSession")
+        self._warm_task = asyncio.create_task(self._warm_output(), name="VoiceWarmup")
         mode = (
             f"wake-gated engine={self._wake_engine!r} window_sec={self._wake_window_sec:.1f}"
             if self._wake is not None
@@ -170,6 +171,20 @@ class VoiceSession:
                     f"model={getattr(self._wake, 'model_name', 'configured')} "
                     f"threshold={threshold:.3f} score_log_interval_sec=1.0"
                 )
+
+    async def _warm_output(self) -> None:
+        """Load the TTS voice and open the speaker stream now, not on the first reply. Both optional on the adapter."""
+        try:
+            warm = getattr(self._tts, "warmup", None)
+            if callable(warm):
+                started = time.perf_counter()
+                await asyncio.to_thread(warm)
+                logger.info(f"[voice] TTS voice loaded in {(time.perf_counter() - started) * 1000:.0f} ms")
+            keep_open = getattr(self._speaker, "keep_open", None)
+            if callable(keep_open):
+                await asyncio.to_thread(keep_open, self._tts.sample_rate)
+        except Exception as e:
+            logger.warning(f"[voice] output warmup skipped: {e}")
 
     async def stop(self) -> None:
         self._stop.set()

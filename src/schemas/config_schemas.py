@@ -87,6 +87,10 @@ class InferenceConfig(BaseModel):
     # llama_cpp only: RAM (MB) for a cache of evaluated prompt prefixes, shared across chat / routing / tool-call
     # prompts. 0 = off. Each cached prefix of ~500 tokens costs roughly 70 MB.
     prompt_cache_mb: int = 0
+    # llama_cpp only: memory-map the GGUF file. On CPUs where llama.cpp repacks the weights (ARM NEON/dotprod, AVX2)
+    # the repacked copy lives in anonymous memory while the mapped file stays resident too, so the model is held twice
+    # (measured on the Pi 5 with Qwen3-4B Q4_K_M: 5.5 GB RSS with mmap, 3.4 GB without, same speed).
+    use_mmap: bool = True
     timeout: int = 120
 
     # Generation budget. `num_predict` is the strongest latency control on
@@ -502,6 +506,10 @@ class VisionConfig(BaseModel):
     port: int = 8081
     n_ctx: int = 4096
     n_threads: int | None = None
+    # false = `--load-mode none`: read the model into RAM instead of mapping it, so llama.cpp's repacked copy is the only
+    # one resident (measured on the Pi 5: 3.3 GB -> 2.5 GB after an image, same speed). Needs a llama-server new enough
+    # to have --load-mode (b11716 does; older builds spelled it --no-mmap).
+    use_mmap: bool = True
     image_max_tokens: int = 512
     startup_timeout_s: int = 120
     image_max_edge_px: int = 1024

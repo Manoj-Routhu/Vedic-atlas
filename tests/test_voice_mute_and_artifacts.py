@@ -505,15 +505,51 @@ def test_playback_interrupt_drops_queued_audio_and_goes_idle(monkeypatch):
 
     from tpa.audio.playback import SpeakerPlayback
 
-    stopped = []
-    monkeypatch.setitem(sys.modules, "sounddevice", types.SimpleNamespace(stop=lambda: stopped.append(1)))
-    sp = SpeakerPlayback()  # worker deliberately not started: chunks just queue up
+    class Stream:   # never calls the callback: chunks just queue up
+        latency = 0.0
+
+        def __init__(self, **_kw):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "sounddevice", types.SimpleNamespace(OutputStream=Stream))
+    sp = SpeakerPlayback()
     for _ in range(3):
         sp.play_pcm(b"\x00\x00", 16000)
     assert sp.is_playing
     sp.interrupt()
-    assert not sp.is_playing and stopped == [1]
-    assert sp._queue.empty()
+    assert not sp.is_playing and not sp._chunks
+
+
+def test_playback_plays_queued_audio_in_order_then_silence_and_goes_idle(monkeypatch):
+    import sys
+    import types
+
+    import numpy as np
+
+    from tpa.audio.playback import SpeakerPlayback
+
+    class Stream:
+        latency = 0.0
+
+        def __init__(self, callback, **_kw):
+            self.callback = callback
+
+        def start(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "sounddevice", types.SimpleNamespace(OutputStream=Stream))
+    sp = SpeakerPlayback()
+    sp.play_pcm(np.array([1, 2, 3], dtype=np.int16).tobytes(), 16000)
+    sp.play_pcm(np.array([4, 5], dtype=np.int16).tobytes(), 16000)
+    out = np.full((4, 1), 9, dtype=np.int16)
+    sp._stream.callback(out, 4, None, None)
+    assert out[:, 0].tolist() == [1, 2, 3, 4] and sp.is_playing   # spans chunks; one sample still queued
+    sp._stream.callback(out, 4, None, None)
+    assert out[:, 0].tolist() == [5, 0, 0, 0]   # the rest, then silence: the stream never runs dry
+    assert not sp.is_playing and sp.wait_done(timeout=1)
 
 
 # ---- wake word fails closed ---------------------------------------------------------

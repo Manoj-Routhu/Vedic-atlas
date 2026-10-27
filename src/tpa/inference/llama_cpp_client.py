@@ -36,6 +36,30 @@ _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 _UNCLOSED_THINK_RE = re.compile(r"<think>.*", re.DOTALL)
 
 
+def _one_entry_per_system_prompt(llama_cpp, llama, capacity_bytes: int):
+    """A LlamaRAMCache that keeps ONE entry per system prompt.
+
+    llama-cpp-python stores a new entry after every call, so each control turn added another ~370 MB copy of the same
+    control prefix and the oldest entries - the chat and narrate prefixes - were evicted to make room. A new entry that
+    shares the WHOLE system turn with an old one serves every later prompt of that kind just as well, so the old one is
+    dropped. "Whole system turn" = the shared prefix holds a second ChatML <|im_start|> (the user turn's); for a model
+    without that token nothing is replaced and the cache behaves as before."""
+    ids = llama.tokenize(b"<|im_start|>", add_bos=False, special=True)
+    turn_start = ids[0] if len(ids) == 1 else None
+
+    class _Cache(llama_cpp.LlamaRAMCache):
+        def __setitem__(self, key, value):
+            key = tuple(key)
+            if turn_start is not None:
+                for old in list(self.cache_state):
+                    shared = llama_cpp.Llama.longest_token_prefix(old, key)
+                    if old != key and key[:shared].count(turn_start) >= 2:
+                        del self.cache_state[old]
+            super().__setitem__(key, value)
+
+    return _Cache(capacity_bytes=capacity_bytes)
+
+
 class LlamaCppClient:
     """Implements InferencePort by loading a local GGUF model via llama-cpp-python."""
 
@@ -48,6 +72,7 @@ class LlamaCppClient:
         num_predict: int = 512,
         think: bool = False,
         prompt_cache_mb: int = 0,
+        use_mmap: bool = True,
         model_lock: threading.Lock | None = None,
     ):
         path = Path(model_path)
@@ -58,12 +83,14 @@ class LlamaCppClient:
             )
         import llama_cpp  # imported lazily so this module can be inspected without the dependency installed
 
-        self._llama = llama_cpp.Llama(model_path=str(path), n_ctx=n_ctx, n_threads=n_threads, verbose=False)
+        self._llama = llama_cpp.Llama(
+            model_path=str(path), n_ctx=n_ctx, n_threads=n_threads, use_mmap=use_mmap, verbose=False
+        )
         if prompt_cache_mb > 0:
             # The context only reuses its KV cache when consecutive prompts share a start. Veda alternates between
             # chat, routing and tool-call prompts, each with a long fixed prefix, so every call re-read its whole
             # prompt. A RAM cache of evaluated prefixes lets each prompt type reuse its own prefix.
-            self._llama.set_cache(llama_cpp.LlamaRAMCache(capacity_bytes=prompt_cache_mb * 1024 * 1024))
+            self._llama.set_cache(_one_entry_per_system_prompt(llama_cpp, self._llama, prompt_cache_mb * 1024 * 1024))
         self._timeout = timeout
         self._num_predict = num_predict
         self._think = think
