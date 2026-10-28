@@ -40,7 +40,7 @@ both also required at runtime). See the setup notes in
 | `app: AppSectionConfig` | `name="Veda"`, `port=8000`, `max_history=30`, `log_level="INFO"` |
 | `inference: InferenceConfig` | `backend="ollama"`, `ollama_host`, `model_alias="qwen-wire"`, `model_path=None`, `n_ctx=4096`, `n_threads=None`, `num_batch=None`, `timeout=120`, `num_predict=512`, `temperature=0.7`, `keep_alive="30m"`, `think=False`, `routing_num_predict=64`, `summary_num_predict=256`, `verify_on_boot=True`, `warmup_on_boot=True` |
 | `embedding: EmbeddingConfig` | `enabled=False`, `model_id="BAAI/bge-small-en-v1.5"`, `model_path=None`, `cache_dir="data/embeddings"`, `top_k=5`, `min_score=0.3`, `sources=["fact","summary"]` (**config/embedding.yaml sets `enabled=true`, `model_path=data/bge-small-en-v1.5`, `top_k=3`, `min_score=0.5`**; `cache_dir` is no longer used) |
-| `audio: AudioConfig` | `wake_word_enabled=True`, `wake_engine="openwakeword"` (**config/audio.yaml sets `none` for v1**: no wake word, everything is transcribed while unmuted), `wake_hotkey="<f9>"`, `wake_window_sec=8.0`, `wake_keyword_path=None`, `wake_oww_model="hey_veda"`, `wake_oww_model_path="data/models/openwakeword/hey_veda.onnx"`, `wake_threshold=0.5`, `daemon_trigger="auto"`, `hotkey="<f8>"` (mute hotkey — separate binding from the wake hotkey), `stt_model="base.en"`, `stt_model_path=None`, `tts_engine="auto"` (`auto` = `pyttsx3` on Windows, `piper` on Linux/Pi; Piper needs `tts_model_path` pointing at a voice `.onnx` with its `.onnx.json` beside it; a missing voice or package stops voice at startup with a clear error)`, `tts_voice="zira"`, `tts_model_path=None`, `mic_device_index=None`, `speaker_device_index=None`, `voice_enabled=True`, `speak_replies=True`, `min_transcript_chars=2`, `speak_timeout_sec=60.0`, `post_speak_settle_sec=0.4`, `echo_guard=True`, `vad: VadConfig` |
+| `audio: AudioConfig` | `wake_word_enabled=True`, `wake_engine="openwakeword"` (**config/audio.yaml sets `none` for v1**: no wake word, everything is transcribed while unmuted), `wake_hotkey="<f9>"`, `wake_window_sec=8.0`, `wake_keyword_path=None`, `wake_oww_model="hey_veda"`, `wake_oww_model_path="data/models/openwakeword/hey_veda.onnx"`, `wake_threshold=0.5`, `daemon_trigger="auto"`, `hotkey="<f8>"` (mute hotkey — separate binding from the wake hotkey), `stt_model="base.en"` (config/audio.yaml sets `small`), `stt_model_path=None` (config points at `data/models/whisper-small`), `stt_backend="faster_whisper"` (`whisper_cpp` until the Pi adapter lands), `stt_language="auto"` (an `.en` model is pinned to `en`; the staged multilingual small model detects the language), `stt_auto_min_sec=2.5`, `stt_threads=None`, `stt_timeout=120.0`, `tts_engine="auto"` (`auto` = `pyttsx3` on Windows, `piper` on Linux/Pi; Piper needs `tts_model_path` pointing at a voice `.onnx` with its `.onnx.json` beside it; a missing voice or package stops voice at startup with a clear error)`, `tts_voice="zira"`, `tts_model_path=None`, `mic_device_index=None`, `speaker_device_index=None`, `voice_enabled=True`, `speak_replies=True`, `min_transcript_chars=2`, `speak_timeout_sec=60.0`, `post_speak_settle_sec=0.4`, `echo_guard=True`, `vad: VadConfig` |
 | `audio.vad: VadConfig` | `engine="energy"`, `aggressiveness=2`, `frame_duration_ms=30`, `min_rms=300.0`, `speech_ratio=3.0`, `noise_adapt=0.05`, `start_frames=3`, `silence_ms=700`, `max_utterance_sec=15.0`, `pre_roll_frames=5` |
 | `audio.speaker_id: SpeakerIdConfig` | `enabled=False`, `backend="resemblyzer"`, `profiles_dir="data/speaker_profiles"`, `match_threshold=0.6`, `require_known_speaker=False`, `min_enroll_seconds=12.0`, `score_window_sec=2.0` — multi-speaker voice recognition; off and purely additive by default. `backend="eagle"` (Picovoice) remains available — see `docs/voice/open-source-wake-speaker-design.md` |
 | `sensing: SensingConfig` | `proactivity="medium"`, `debounce_window_sec=30.0`, `rate_limit_max=6`, `rate_limit_window_sec=60.0` |
@@ -57,6 +57,44 @@ both also required at runtime). See the setup notes in
 | `agents: AgentsConfig` | `supervisor/responder/system: AgentEntry` (each `enabled=True`, `model=None` → inherits `inference.model_alias`, `description=""`, `skills=[]`), `tasks` / `lookup` / `memory: AgentEntry` (descriptions only), `session_ttl_sec=900` (session working state older than this is ignored). The `llm_routing`, `tools_enabled` and `orchestrator_enabled` flags no longer exist: there is no routing and the orchestrator is the only path |
 | `prompting: PromptingConfig` (config/prompting.yaml) | `budgets` (per-stage prompt token budgets; a missing key keeps the `PromptBudgets` default: `control=3000`, `narrate=500`, `chat=1500`, `observation_max=320`, `chat_history_turns=8`), `control_history_exchanges=2` (complete user+reply exchanges shown to the control decode), `turn_chars=200`, `user_message_chars=500` |
 | `skills: SkillsConfig` | `terminal` (`permission_level="approve"`, extra: `working_directory`, `timeout`, `blocked_commands`, `blocked_patterns`), `file_ops` (`permission_level="notify"`, extra: `allowed_paths`, `blocked_paths`), `tasks` (`permission_level="notify"`), `custom_skills_dir="data/custom_skills"` |
+| `app.multilingual: MultilingualConfig` | `enabled=true`, `reject_unknown=true`, `min_letters=8`, `unknown_reply="Sorry, I didn't understand that. Could you say it again?"` — see "Multilingual replies" below |
+
+## Multilingual replies
+
+Every turn names its language once, in the control decode. `ControlDecision.language` carries the
+model's own label (`"German"`, `"Telugu"`, …) or `"unknown"`; `domain/policies/language_policy.py`
+overrides it for the scripts it reads exactly (Telugu, Devanagari/Hindi) and for German, so those three
+can never be mislabelled.
+
+The name is then stated explicitly in each reply prompt (`The user wrote in German. Write your entire
+reply in German.`) — far more reliable on a small model than the abstract "reply in the user's language"
+rule. The same line goes into the narrate stage, so `reply_mode: llm` tool results are phrased in the
+user's language rather than the provider's English.
+
+Tools with `reply_mode: template` (weather, tasks, currency, clock, calendar, gmail, …) still build their
+sentence in English inside the adapter — deliberately, so the tool's own numbers and names are spoken
+verbatim. When the turn's language is not English, that finished sentence is translated once at reply
+assembly (`assistant_orchestrator._localize` → `translate_stage`). The translate prompt carries only the
+target language and the sentence — never the user's question, which a small model otherwise repeats
+instead of translating. A translation is rejected and the English sentence kept when its numbers are not
+in the source sentence (checked with `is_grounded` against the sentence alone) or when it is an echo of
+the user's message (`domain/policies/echo_policy.py`, similarity ≥ 0.85). English turns pay no extra cost.
+
+When `app.multilingual.reject_unknown` is on and the model names no readable language for a message that
+plausibly is language (≥ 2 words, ≥ `min_letters` letters), the turn answers `unknown_reply` without a
+chat completion. Tool and clarification routes are never rejected: picking a tool or asking a question is
+proof the message was understood.
+
+Plain chat has its own echo backstop (`domain/policies/echo_policy.py`). The first sentence is held before
+it is shown; if it is the user's own message (normalised similarity ≥ 0.85), the stream is cancelled and
+the model is asked once more with an explicit "do not repeat the user" instruction. If it echoes again the
+turn answers a fixed sentence in the turn's language (`fallback_reply`, English for languages it does not
+cover) — the user's own words are never shown back.
+
+Limits: this covers text and the LLM side of voice. `audio.stt_model/…` is still an English-only Whisper
+checkpoint and `audio.tts_voice` a single SAPI voice, so spoken input in other languages is transcribed /
+spoken with English models until those two are swapped (see docs/voice/).
+
 
 The repo's actual `config/*.yaml` files override a handful of these
 defaults for the demo profile — notably `inference.yaml` sets

@@ -28,6 +28,7 @@ from controller.cli import google_login
 from controller.cli.client import VedaClient
 from controller.cli.commands import render_doctor, render_traces
 from controller.cli.logo import render_banner, status_line
+from controller.cli.paste import ensure_utf8_streams, read_message
 from controller.cli.render import stream_to_terminal
 
 
@@ -39,6 +40,7 @@ _HELP = """
   /persona           print current persona
   /persona <name>    switch persona (developer / scrum / architect / manager)
   /status            one-line status snapshot
+  /paste             send a message read verbatim (paste non-Latin text here; finish with a line containing only ".")
   /yolo on \u00b7 /yolo off
                      toggle approval-mode (auto vs ask)
   /approve           list pending approvals (resolve interactively)
@@ -71,6 +73,7 @@ class Repl:
         self._stop_polling = threading.Event()
 
     def run(self) -> int:
+        ensure_utf8_streams()
         self._refresh_meta()
         render_banner(
             persona=self.persona, server_url=self.client.server_url, brain=self.brain,
@@ -247,6 +250,9 @@ class Repl:
         if cmd == "listen":
             self._cmd_listen()
             return True
+        if cmd == "paste":
+            self._cmd_paste()
+            return True
         if cmd == "task":
             self._cmd_task(rest)
             return True
@@ -352,6 +358,21 @@ class Repl:
         if voice and voice.get("available"):
             detail += f" \u00b7 running={str(voice.get('running', False)).lower()} \u00b7 turns={voice.get('turns', 0)}"
         self.console.print(detail + "[/dim]")
+
+    def _cmd_paste(self) -> None:
+        """Send a message read verbatim from stdin, bypassing the line editor.
+
+        prompt_toolkit miscalculates the width of combining marks and can drop characters while redrawing;
+        reading here keeps Devanagari/Telugu/etc. exactly as pasted."""
+        self.console.print(
+            "[dim]Paste the message, then a line containing only [bold].[/bold] and Enter "
+            "(Ctrl+Z then Enter for EOF).[/dim]"
+        )
+        message = read_message()
+        if not message:
+            self.console.print("[dim]nothing pasted[/dim]")
+            return
+        self._send_chat(message)
 
     def _cmd_task(self, rest: str) -> None:
         parts = rest.split()

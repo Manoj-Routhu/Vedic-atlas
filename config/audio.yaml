@@ -2,13 +2,22 @@ wake_word_enabled: true
 wake_engine: openwakeword
 wake_oww_model: hey_veda
 wake_oww_model_path: data/models/openwakeword/hey_veda.onnx
-wake_threshold: 0.4
+wake_threshold: 0.65        # 0.4 fired on its own playback/silence (scores 0.7-0.84 with rms 0.00001)
 wake_window_sec: 10.0        # time to start one command; say "Hey Veda" again for the next
 daemon_trigger: auto
 hotkey: <f8>
 
-stt_model: base.en
-stt_model_path: data/models/whisper-base.en
+# Multilingual Whisper small (staged in data/models/whisper-small). "auto" detects the spoken language.
+stt_model: small
+stt_model_path: data/models/whisper-small
+# "hi" = decode every utterance as Hindi. Short clips (1-2 s) are too short for Whisper's language ID:
+# with "auto" a 1.6 s Hindi clip was detected as Italian (0.948). Set back to "auto" only for long utterances,
+# or when the sticky-language switch lands.
+stt_backend: faster_whisper
+stt_language: hi
+stt_auto_min_sec: 2.5
+stt_threads: null
+stt_timeout: 120.0
 noise_suppression_enabled: true
 noise_suppression_strength: 0.75  # 0 = off, 1 = strongest; targets steady fan/hum noise
 
@@ -35,6 +44,6 @@ vad:
   noise_adapt: 0.05
   aggressiveness: 2
   start_frames: 3
-  silence_ms: 400           # quicker end‑of‑speech detection
+  silence_ms: 700           # Hindi sentence pauses were being cut at 400 ms
   max_utterance_sec: 10.0   # shorter utterance cap
   pre_roll_frames: 5

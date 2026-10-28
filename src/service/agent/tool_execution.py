@@ -89,13 +89,14 @@ async def narrate_with_grounding(
     a retry costs seconds for low odds and would break the two-model-calls-per-turn ceiling.
     Returns the text, or None; the caller then falls back to the deterministic reply.
     `task` picks the content task ("narrate" or "advise"); `header` is a line placed above the results in the prompt."""
+    language = ctx.metadata.get("language")
     if task == "narrate" and not header:
-        stage_b = composer.narrate_stage(ctx.user_message, results)
+        stage_b = composer.narrate_stage(ctx.user_message, results, language=language)
     else:
         body = "\n".join(r.strip() for r in results if r and r.strip())
         document = f"{header}\n{body}" if header else body
-        stage_b = composer.content_stage(task, document, ctx.user_message)
-    outcome.prompt_tokens["narrate"] = stage_b.tokens
+        stage_b = composer.content_stage(task, document, ctx.user_message, language=language)
+    outcome.prompt_tokens[task] = stage_b.tokens
     shown = (lambda t: "<private>" if private else t[:300])
     logger.info(f"[{task}] decoding over {len(results)} result(s), prompt ~{stage_b.tokens} tokens...")
     for attempt in range(2):
