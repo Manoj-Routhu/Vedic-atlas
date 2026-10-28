@@ -40,7 +40,7 @@ both also required at runtime). See the setup notes in
 | `app: AppSectionConfig` | `name="Veda"`, `port=8000`, `max_history=30`, `log_level="INFO"` |
 | `inference: InferenceConfig` | `backend="ollama"`, `ollama_host`, `model_alias="qwen-wire"`, `model_path=None`, `n_ctx=4096`, `n_threads=None`, `num_batch=None`, `timeout=120`, `num_predict=512`, `temperature=0.7`, `keep_alive="30m"`, `think=False`, `routing_num_predict=64`, `summary_num_predict=256`, `verify_on_boot=True`, `warmup_on_boot=True` |
 | `embedding: EmbeddingConfig` | `enabled=False`, `model_id="BAAI/bge-small-en-v1.5"`, `model_path=None`, `cache_dir="data/embeddings"`, `top_k=5`, `min_score=0.3`, `sources=["fact","summary"]` (**config/embedding.yaml sets `enabled=true`, `model_path=data/bge-small-en-v1.5`, `top_k=3`, `min_score=0.5`**; `cache_dir` is no longer used) |
-| `audio: AudioConfig` | `wake_word_enabled=True`, `wake_engine="openwakeword"` (**config/audio.yaml sets `none` for v1**: no wake word, everything is transcribed while unmuted), `wake_hotkey="<f9>"`, `wake_window_sec=8.0`, `wake_keyword_path=None`, `wake_oww_model="hey_veda"`, `wake_oww_model_path="data/models/openwakeword/hey_veda.onnx"`, `wake_threshold=0.5`, `daemon_trigger="auto"`, `hotkey="<f8>"` (mute hotkey — separate binding from the wake hotkey), `stt_model="base.en"` (config/audio.yaml sets `small`), `stt_model_path=None` (config points at `data/models/whisper-small`), `stt_backend="faster_whisper"` (`whisper_cpp` until the Pi adapter lands), `stt_language="auto"` (an `.en` model is pinned to `en`; the staged multilingual small model detects the language), `stt_auto_min_sec=2.5`, `stt_threads=None`, `stt_timeout=120.0`, `tts_engine="auto"` (`auto` = `pyttsx3` on Windows, `piper` on Linux/Pi; Piper needs `tts_model_path` pointing at a voice `.onnx` with its `.onnx.json` beside it; a missing voice or package stops voice at startup with a clear error)`, `tts_voice="zira"`, `tts_model_path=None`, `mic_device_index=None`, `speaker_device_index=None`, `voice_enabled=True`, `speak_replies=True`, `min_transcript_chars=2`, `speak_timeout_sec=60.0`, `post_speak_settle_sec=0.4`, `echo_guard=True`, `vad: VadConfig` |
+| `audio: AudioConfig` | `wake_word_enabled=True`, `wake_engine="openwakeword"` (**config/audio.yaml sets `none` for v1**: no wake word, everything is transcribed while unmuted), `wake_hotkey="<f9>"`, `wake_window_sec=8.0`, `wake_keyword_path=None`, `wake_oww_model="hey_veda"`, `wake_oww_model_path="data/models/openwakeword/hey_veda.onnx"`, `wake_threshold=0.5`, `daemon_trigger="auto"`, `hotkey="<f8>"` (mute hotkey — separate binding from the wake hotkey), `stt_model="base.en"` (config/audio.yaml sets `small`), `stt_model_path=None` (config points at `data/models/whisper-small`), `stt_backend="faster_whisper"` (`whisper_cpp` until the Pi adapter lands), `stt_language="auto"` (detect the language; clips shorter than `stt_auto_min_sec` reuse the last confidently detected language; switch at runtime with `/language en|hi|...|auto`; an `.en` model is pinned to `en`), `stt_auto_min_sec=2.5`, `stt_threads=None`, `stt_timeout=120.0`, `tts_engine="auto"` (`auto` = `pyttsx3` on Windows, `piper` on Linux/Pi; the repo sets `piper`)`, `tts_voice="zira"` (pyttsx3 hint), `tts_model_path` (default Piper voice), `tts_voice_map` (language code -> Piper `.onnx`; missing language falls back to the default voice; a missing voice or package stops voice at startup with a clear error), `mic_device_index=None`, `speaker_device_index=None`, `voice_enabled=True`, `speak_replies=True`, `min_transcript_chars=2`, `speak_timeout_sec=60.0`, `post_speak_settle_sec=0.4`, `echo_guard=True`, `vad: VadConfig` |
 | `audio.vad: VadConfig` | `engine="energy"`, `aggressiveness=2`, `frame_duration_ms=30`, `min_rms=300.0`, `speech_ratio=3.0`, `noise_adapt=0.05`, `start_frames=3`, `silence_ms=700`, `max_utterance_sec=15.0`, `pre_roll_frames=5` |
 | `audio.speaker_id: SpeakerIdConfig` | `enabled=False`, `backend="resemblyzer"`, `profiles_dir="data/speaker_profiles"`, `match_threshold=0.6`, `require_known_speaker=False`, `min_enroll_seconds=12.0`, `score_window_sec=2.0` — multi-speaker voice recognition; off and purely additive by default. `backend="eagle"` (Picovoice) remains available — see `docs/voice/open-source-wake-speaker-design.md` |
 | `sensing: SensingConfig` | `proactivity="medium"`, `debounce_window_sec=30.0`, `rate_limit_max=6`, `rate_limit_window_sec=60.0` |
@@ -173,3 +173,27 @@ Besides `ExceptionCode`/`ErrorMessage` (covered in
 All enums in this file override `__repr__`/`__str__` to return `.value`.
 
 `inference.prompt_cache_mb` (llama_cpp only, schema default `0`, **config/inference.yaml sets `768`**): RAM for a cache of evaluated prompt prefixes shared across chat, control-decode and content prompts. Without it every call re-reads its whole prompt because the prompts alternate; measured warm: chat 14 s -> 2.4 s, routing 5.5 s -> 2.4 s, tool decision 10 s -> 4.2 s. About 70 MB per cached ~500-token prefix; use `0` on a small device.
+
+## Switching the STT language
+
+`stt_language: auto` detects each utterance and keeps a sticky hint from the last confident detection, used for
+clips shorter than `stt_auto_min_sec` (2.5 s by default) where Whisper's language ID is unreliable. A single
+language can be pinned at runtime with `/language en|hi|te|de|ja` (or `auto`) in the CLI; the same switch is
+`POST /api/voice/language`. The current value is reported by `/api/voice/status` and `/language` with no argument.
+
+## Latin tool arguments
+
+A tool parameter can declare `format: latin` (`config/tools/weather.yaml`, `weather_forecast.yaml`). The
+control prompt asks the model to transliterate names (`???????? -> Hyderabad`), and
+`domain/policies/argument_policy.py` repairs a non-compliant decode before the call runs:
+`place_names.to_latin()` first applies a spelling fix for the names Whisper mangles, then `unidecode` for any
+other non-Latin name. A value that still cannot be resolved is left for the tool and ends in a clarification,
+not a guessed city. Parameters without the flag (e.g. a task title) stay in the user's language.
+
+## Multilingual speech output
+
+`audio.tts_engine: piper` with `audio.tts_voice_map` selects the voice from the turn's reply language
+(`en`, `de`, `hi`, `te`, `ja`; Kannada has no Piper voice and falls back to the default). The staged voices
+live in `data/models/piper/`: `en_US-lessac-medium`, `de_DE-thorsten-medium`, `hi_IN-priyamvada-medium`,
+`te_IN-padmavathi-medium`, `ja_JP-hi_fi_captain-medium` (each `.onnx` + `.onnx.json`). Voices load lazily and
+are cached; Piper runs fully offline. `pyttsx3` remains the fallback when a Piper voice/package is missing.

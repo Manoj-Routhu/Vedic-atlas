@@ -46,6 +46,7 @@ _HELP = """
   /approve           list pending approvals (resolve interactively)
   /mute \u00b7 /unmute    close / open the microphone
   /listen            show mic state (muted / listening / turns)
+  /language [code]   show or set the STT language (auto | en | hi | te | de | ja)
   /doctor            check the online tools (weather, search, currency)
   /trace [n]         show what the tools actually did on the last n turns
   /task              list tasks · /task add <title> · /task done <id>
@@ -250,6 +251,9 @@ class Repl:
         if cmd == "listen":
             self._cmd_listen()
             return True
+        if cmd in ("language", "lang"):
+            self._cmd_language(rest)
+            return True
         if cmd == "paste":
             self._cmd_paste()
             return True
@@ -338,6 +342,18 @@ class Repl:
             self.console.print("[bold red]MIC CLOSED[/bold red] (muted)")
         else:
             self.console.print("[bold green]MIC OPEN[/bold green] (listening)")
+
+    def _cmd_language(self, rest: str) -> None:
+        value = rest.strip().lower()
+        try:
+            if not value:
+                status = self.client.voice_status()
+                self.console.print(f"stt language: [bold]{status.get('stt_language', '?')}[/bold]")
+                return
+            result = self.client.set_voice_language(value)
+            self.console.print(f"stt language set to [bold]{result.get('language', value)}[/bold]")
+        except Exception as e:
+            self.console.print(f"[red]language failed:[/red] {e}")
 
     def _cmd_listen(self) -> None:
         try:

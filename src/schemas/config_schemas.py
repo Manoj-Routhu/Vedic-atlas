@@ -242,7 +242,9 @@ class AudioConfig(BaseModel):
 
     tts_engine: str = "auto"  # "auto" (pyttsx3 on Windows, Piper elsewhere) | "pyttsx3" | "piper"
     tts_voice: str = "zira"
-    tts_model_path: str | None = None  # required when tts_engine == "piper"
+    tts_model_path: str | None = None  # required when tts_engine == "piper"; the default voice
+    # language (code or English name) -> Piper voice .onnx path. A missing language speaks with the default voice.
+    tts_voice_map: dict[str, str] = Field(default_factory=dict)
 
     mic_device_index: int | None = None
     speaker_device_index: int | None = None

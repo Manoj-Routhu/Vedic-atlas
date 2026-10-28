@@ -72,18 +72,18 @@ class FasterWhisperProvider:
         language: str = "auto",
         threads: int | None = None,
         timeout: float = 120.0,
+        auto_min_sec: float = 2.5,
     ):
         self._model_size = model_size
         self._cache_dir = str(cache_dir) if cache_dir else None
         self._model = None
         self._threads = threads
         self._timeout = timeout
-        requested = (language or "").strip()
-        self._language = None if requested.lower() in ("", "auto") else requested
-        if self._language is None and str(model_size).rstrip("/\\").lower().endswith(".en"):
-            # An .en checkpoint cannot auto-detect; pin it instead of letting the library fail or translate.
-            self._language = "en"
-            logger.warning("[stt] English-only model with language=auto: pinning to en")
+        self._auto_min_sec = auto_min_sec
+        # Sticky hint: the last confidently detected language. Short clips misdetect, so below auto_min_sec
+        # they reuse this instead of letting Whisper guess.
+        self._last_language: str | None = None
+        self.set_language(language, announce=False)
         self._noise_suppressor = (
             SpectralNoiseSuppressor(strength=noise_suppression_strength)
             if noise_suppression_enabled
@@ -95,6 +95,37 @@ class FasterWhisperProvider:
             f"strength={noise_suppression_strength:.2f} "
             f"language={self._language or 'auto'}"
         )
+
+    @property
+    def current_language(self) -> str:
+        """The pinned language, or "auto" when detection/sticky is in charge."""
+        return self._language or "auto"
+
+    def set_language(self, language: str | None, *, announce: bool = True) -> None:
+        """Pin a language code ("en", "hi", ...) or "auto" for detection + sticky."""
+        value = (language or "auto").strip().lower()
+        self._language = None if value in ("", "auto") else value
+        if self._language is None and str(self._model_size).rstrip("/\\").lower().endswith(".en"):
+            # An .en checkpoint cannot auto-detect; pin it instead of letting the library fail or translate.
+            self._language = "en"
+            logger.warning("[stt] English-only model with language=auto: pinning to en")
+        if announce:
+            logger.info(f"[stt] language set to {self.current_language!r}")
+
+    def _language_for(self, duration_sec: float) -> str | None:
+        """The language to pass to Whisper for this clip (None = let it detect)."""
+        if self._language:
+            return self._language
+        if duration_sec < self._auto_min_sec and self._last_language:
+            return self._last_language
+        return None
+
+    def _remember_language(self, detected: str | None, duration_sec: float, confidence: float) -> None:
+        if self._language is not None or not detected:
+            return
+        if duration_sec >= self._auto_min_sec and confidence >= 0.6 and detected != self._last_language:
+            self._last_language = detected
+            logger.info(f"[stt] sticky language -> {detected!r}")
 
     def _ensure(self):
         if self._model is None:
@@ -146,7 +177,7 @@ class FasterWhisperProvider:
                 )
             inference_started = time.perf_counter()
             segments, info = model.transcribe(
-                pcm, language=self._language, task="transcribe", vad_filter=True,
+                pcm, language=self._language_for(audio.duration_sec), task="transcribe", vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 500},
                 # Whisper invents text on noise ("subscribe to our channel", "Bye. Bye. Bye..."), and
                 # conditioning on its own previous output makes it loop: turn that off and reject
@@ -197,6 +228,7 @@ class FasterWhisperProvider:
         except Exception:
             logger.exception("[stt] Whisper transcription failed")
             raise
+        self._remember_language(detected_language, audio.duration_sec, float(confidence))
         elapsed_ms = (time.perf_counter() - started) * 1000
         if self._timeout and elapsed_ms > self._timeout * 1000:
             logger.warning(

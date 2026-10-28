@@ -130,6 +130,7 @@ def build_stt(cfg: AppConfig):
             "language": cfg.audio.stt_language,
             "threads": cfg.audio.stt_threads,
             "timeout": cfg.audio.stt_timeout,
+            "auto_min_sec": cfg.audio.stt_auto_min_sec,
         }
         path = cfg.audio.stt_model_path
         if path:

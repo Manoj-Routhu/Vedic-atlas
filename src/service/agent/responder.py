@@ -23,7 +23,7 @@ from domain.entities.agent_result import AgentResult
 from domain.ports.inference_port import InferencePort
 from domain.ports.knowledge_store_port import KnowledgeStorePort
 from domain.ports.memory_repository_port import MemoryRepositoryPort
-from core.logging_config import logger
+from core.logging_config import logger, log_text
 from domain.policies.claim_guard_policy import SentenceClaimGuard
 from domain.policies.echo_policy import fallback_reply, is_echo
 from domain.policies.language_policy import language_of
@@ -195,7 +195,7 @@ class ResponderAgent(LLMAgent):
 
     def _vet(self, response: str) -> str:
         if self._reply_veto is not None and response and self._reply_veto(response):
-            logger.warning(f"[tool-guard] chat reply claimed an action with no tool call: {response[:160]!r}")
+            logger.warning(f"[tool-guard] chat reply claimed an action with no tool call: {log_text(response, 160)}")
             return UNCONFIRMED_REPLY
         return response
 
@@ -275,7 +275,7 @@ class ResponderAgent(LLMAgent):
                 return
             if not echoed:
                 return
-            logger.warning(f"[language] chat reply echoed the user: {''.join(spoken)[:120]!r}")
+            logger.warning(f"[language] chat reply echoed the user: {log_text(''.join(spoken), 120)}")
             if attempt == 0:
                 ctx.metadata["no_echo"] = True   # build_prompt asks for a real answer on the retry
                 continue

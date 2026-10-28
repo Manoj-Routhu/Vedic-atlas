@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
-from core.logging_config import logger
+from core.logging_config import logger, log_text
 from domain.entities.agent_context import AgentContext
 from domain.ports.inference_port import InferencePort
 from service.prompting.prompt_composer import PromptComposer
@@ -97,7 +97,7 @@ async def narrate_with_grounding(
         document = f"{header}\n{body}" if header else body
         stage_b = composer.content_stage(task, document, ctx.user_message, language=language)
     outcome.prompt_tokens[task] = stage_b.tokens
-    shown = (lambda t: "<private>" if private else t[:300])
+    shown = (lambda t: "<private>" if private else log_text(t, 300))
     logger.info(f"[{task}] decoding over {len(results)} result(s), prompt ~{stage_b.tokens} tokens...")
     for attempt in range(2):
         try:
@@ -112,11 +112,11 @@ async def narrate_with_grounding(
             logger.info(f"[{task}] empty output (attempt {attempt + 1})")
             continue
         grounded = grounding_check(text, results, ctx.user_message)
-        logger.info(f"[{task}] output={shown(text)!r} grounded={grounded}")
+        logger.info(f"[{task}] output={shown(text)} grounded={grounded}")
         if grounded:
             outcome.narrated = True
             return text
-        logger.warning(f"[tool-guard] ungrounded narration (attempt {attempt + 1}): {shown(text)!r}")
+        logger.warning(f"[tool-guard] ungrounded narration (attempt {attempt + 1}): {shown(text)}")
         outcome.notes.append("ungrounded narration rejected")
         return None   # not retried: see the docstring
     return None

@@ -21,6 +21,7 @@ Rules:
 - advise: true when the user wants a recommendation or a yes/no decision that depends on the tool's data (should I..., do I need..., am I free..., is it too ... to ...). A plain lookup never gets advise.
 - also_chat: true ONLY when part of the message needs no tool (maths, general knowledge, small talk).
 - get_room_temperature is the sensor in the user's own room; get_weather is outdoors. "In here", "this room", "inside" mean the room sensor.
+- Tool arguments use Latin script: transliterate place names (हैदराबाद -> Hyderabad, मुंबई -> Mumbai).
 - Use only the listed arguments.
 
 Examples:
@@ -38,12 +39,8 @@ User: will it rain tomorrow in Pune, do I need an umbrella
 {"needs_live_data":true,"calls":[{"tool":"get_weather_forecast","args":{"place":"Pune","date_offset":1}}],"advise":true}
 User: what is 7 times 8, and the weather in Pune
 {"needs_live_data":true,"calls":[{"tool":"get_weather","args":{"place":"Pune"}}],"also_chat":true}
-User: am I free at 9 tonight
-{"needs_live_data":true,"calls":[{"tool":"calendar_agenda","args":{"date_offset":0}}],"advise":true}
 User: do I need a jacket in Delhi today
 {"needs_live_data":true,"calls":[{"tool":"get_weather","args":{"place":"Delhi"}}],"advise":true}
-User: who was the first prime minister of India
-{"needs_live_data":false,"calls":[]}
 ACTIVE: web_search | query=founder of Infosys | just now
 User: where are they from?
 {"needs_live_data":true,"calls":[{"tool":"web_search","args":{"query":"where are the founders of Infosys from"}}]}
@@ -53,12 +50,12 @@ User: what's the weather there?
 ACTIVE: gmail_draft | to=priya@example.com subject=Running late | just now
 User: how about the other one?
 {"needs_live_data":false,"calls":[],"clarification":"Which one do you mean?"}
-User: remind me to renew my passport
-{"needs_live_data":true,"calls":[{"tool":"tasks","args":{"action":"add","title":"renew passport"}}]}
 User: Ich mag Jazzmusik am Abend
 {"needs_live_data":false,"calls":[],"language":"German"}
 User: मुझे किताबें पढ़ना पसंद है
 {"needs_live_data":false,"calls":[],"language":"Hindi"}
 User: asdkj qweoiu zxcv
 {"needs_live_data":false,"calls":[],"language":"unknown"}
+User: हैदराबाद में मौसम कैसा है?
+{"needs_live_data":true,"calls":[{"tool":"get_weather","args":{"place":"Hyderabad"}}],"language":"Hindi"}
 <<tool_examples>>

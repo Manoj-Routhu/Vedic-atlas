@@ -20,13 +20,14 @@ from dataclasses import replace
 from datetime import datetime
 from typing import AsyncIterator, Callable, Mapping, Sequence, Awaitable
 
-from core.logging_config import logger
+from core.logging_config import logger, log_text
 from domain.entities.agent_context import AgentContext
 from domain.entities.agent_result import AgentResult
 from domain.entities.control_decision import ControlDecision
 from domain.entities.session_context import SessionContext
 from domain.entities.tool_manifest import REPLY_TEMPLATE, RETURNS_DOCUMENT, ToolManifest
 from domain.entities.turn_trace import TurnTrace
+from domain.policies.argument_policy import normalize_latin_arguments
 from domain.policies.dispatch_policy import Resolution, Route, resolve
 from domain.policies.grounding_policy import is_grounded, states_a_measurement
 from domain.policies.echo_policy import is_echo
@@ -160,10 +161,14 @@ class AssistantOrchestrator(BaseAgent):
             state = self._session_state.get(ctx.session_id, ctx.speaker_id)
         active = self._session_state.render_active(state) if (self._session_state and state) else ""
         history = self._conversation.turns if self._conversation is not None else []
-        logger.info(f"[turn] user={ctx.user_message!r} voice={ctx.from_voice}")
+        logger.info(f"[turn] user={log_text(ctx.user_message)} voice={ctx.from_voice}")
         result = await self._decoder.decide(ctx.user_message, history, active)
+        normalized, arg_notes = normalize_latin_arguments(result.decision, self._manifests)
+        if arg_notes:
+            result = replace(result, decision=normalized)
+            logger.info(f"[control] normalized Latin tool args: {arg_notes}")
         logger.info(
-            f"[control] raw={result.raw!r} -> calls={len(result.decision.calls)} advise={result.decision.advise} "
+            f"[control] raw={log_text(result.raw)} -> calls={len(result.decision.calls)} advise={result.decision.advise} "
             f"also_chat={result.decision.also_chat} needs_live_data={result.decision.needs_live_data} "
             f"flags: adaptive_reply={self._adaptive_reply} mixed_intent={self._mixed_intent} parallel={self._parallel_tool_calls}"
         )
@@ -184,6 +189,7 @@ class AssistantOrchestrator(BaseAgent):
             except Exception as e:   # the check is an extra; never let it take the turn down
                 logger.warning(f"[control] conversation-intent check failed: {type(e).__name__}")
         outcome = TurnOutcome(reply=None)
+        outcome.notes.extend(arg_notes)
         outcome.timings_ms["control"] = result.ms
         outcome.prompt_tokens["control"] = result.prompt_tokens
         if result.trimmed:
@@ -203,7 +209,7 @@ class AssistantOrchestrator(BaseAgent):
         logger.info(
             f"[control] route={resolution.route.value} live={result.decision.needs_live_data} "
             f"calls={[c.get('tool') for c in resolution.calls]} ms={result.ms} tokens={result.prompt_tokens} "
-            f"lang={language!r} active={active!r} user={ctx.user_message!r}"
+            f"lang={log_text(language)} active={log_text(active)} user={log_text(ctx.user_message)}"
         )
         return result, resolution, state, active, outcome
 
@@ -308,7 +314,7 @@ class AssistantOrchestrator(BaseAgent):
             if chat_text == UNCONFIRMED_REPLY or states_a_measurement(chat_text):
                 # A claim of an action, or a measurement: the chat half started before the tool result existed, so
                 # either one can only be invented. The verified tool sentence stands alone.
-                logger.warning(f"[tool-guard] chat half of a mixed turn dropped: {chat_text[:160]!r}")
+                logger.warning(f"[tool-guard] chat half of a mixed turn dropped: {log_text(chat_text, 160)}")
                 outcome.notes.append("chat half dropped")
                 chat_text = ""
         private = any(self._manifests[c.tool].private for c in outcome.calls)
@@ -408,11 +414,11 @@ class AssistantOrchestrator(BaseAgent):
             if not translated:
                 continue
             if is_echo(translated, ctx.user_message):
-                logger.warning(f"[language] template translation echoed the user: {translated[:120]!r}")
+                logger.warning(f"[language] template translation echoed the user: {log_text(translated, 120)}")
                 outcome.notes.append("template translation echoed the user")
                 continue
             if not is_grounded(translated, [text]):
-                logger.warning(f"[language] rejected ungrounded template translation: {translated[:120]!r}")
+                logger.warning(f"[language] rejected ungrounded template translation: {log_text(translated, 120)}")
                 outcome.notes.append("template translation rejected (ungrounded)")
                 return None
             outcome.notes.append(f"template reply translated to {language}")
@@ -422,7 +428,7 @@ class AssistantOrchestrator(BaseAgent):
     def _backstop(self, reply: str, outcome: TurnOutcome) -> str:
         """claims_action on EVERY reply path. A claim is only legitimate if a tool actually succeeded this turn."""
         if self._claims_action is not None and not any(c.ok for c in outcome.calls) and self._claims_action(reply):
-            logger.warning(f"[tool-guard] reply claimed an action with no successful tool call: {reply[:160]!r}")
+            logger.warning(f"[tool-guard] reply claimed an action with no successful tool call: {log_text(reply, 160)}")
             outcome.notes.append("reply claimed an action; refused")
             return UNCONFIRMED_REPLY
         return reply
@@ -441,7 +447,7 @@ class AssistantOrchestrator(BaseAgent):
         else:
             reply = await self._run_tools(ctx, res.calls, outcome, advise=res.advise)
         if res.follow_up:   # a held call or the model's own question: asked AFTER what could be answered
-            logger.info(f"[plan] follow-up question after the tool answer: {res.follow_up!r}")
+            logger.info(f"[plan] follow-up question after the tool answer: {log_text(res.follow_up)}")
             outcome.notes.append("follow-up question asked")
             reply = f"{reply} {res.follow_up}".strip()
         return reply
@@ -451,7 +457,7 @@ class AssistantOrchestrator(BaseAgent):
         logger.info(
             f"[reply] route={res.route.value} mode={outcome.reply_mode or 'template'} decodes={sorted(k for k in outcome.timings_ms if k in ('control', 'narrate', 'chat'))} "
             f"timings_ms={outcome.timings_ms} total_ms={int((time.perf_counter() - started) * 1000)} notes={outcome.notes} "
-            f"reply={'<private>' if private else reply[:300]!r}"
+            f"reply={'<private>' if private else log_text(reply, 300)}"
         )
 
     def _unknown_language(self, ctx: AgentContext, resolution: Resolution, outcome: TurnOutcome) -> str | None:
@@ -466,7 +472,7 @@ class AssistantOrchestrator(BaseAgent):
             return None
         if not looks_like_text(ctx.user_message, self._min_language_letters):
             return None
-        logger.info(f"[language] no language named for {ctx.user_message[:80]!r}; asking the user to repeat")
+        logger.info(f"[language] no language named for {log_text(ctx.user_message, 80)}; asking the user to repeat")
         outcome.notes.append("unknown language: asked the user to repeat")
         return self._unknown_language_reply
 
@@ -550,7 +556,7 @@ class AssistantOrchestrator(BaseAgent):
             if res.route is Route.CHAT:
                 self._add_room_context(ctx)
                 chat = await self._responder.execute(ctx)
-                logger.info(f"[reply] route=chat room_context={'ROOM' in ctx.system_context} reply={chat.response[:300]!r}")
+                logger.info(f"[reply] route=chat room_context={'ROOM' in ctx.system_context} reply={log_text(chat.response, 300)}")
                 self._record_trace(ctx, res.route, result.decision, outcome, chat.response, started, state, active)
                 chat.delegated_to = self._responder.name
                 return chat
