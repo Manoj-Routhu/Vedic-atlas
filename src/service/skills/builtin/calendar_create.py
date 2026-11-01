@@ -6,6 +6,9 @@ back from the event the calendar returned, so the reply can never claim somethin
 
 No attendees are ever set: adding an event cannot send anybody an invitation. An identical event (same title, same start)
 is not added twice, so repeating the request is harmless.
+
+When the user is answering this tool's own question ("What time should I set it for?" -> "10:30 PM"), the request and its
+answers are checked together; "in 10 minutes" is worked out here from the clock.
 """
 
 from __future__ import annotations
@@ -17,8 +20,8 @@ from domain.entities.agent_context import AgentContext
 from domain.entities.skill_result import SkillResult
 from domain.entities.tool_manifest import ToolManifest
 from domain.policies.calendar_policy import (
-    asks_to_change_not_add, day_label, event_times, message_states_time, same_event, spoken_created,
-    title_is_from_the_message, validate_new_event,
+    asks_to_add, asks_to_change_not_add, day_label, earlier_request, event_times, message_states_duration,
+    message_states_time, relative_start, same_event, spoken_created, title_is_from_the_message, validate_new_event,
 )
 from domain.ports.calendar_port import CalendarPort
 from exceptions.exception import ToolUnavailableError
@@ -42,13 +45,24 @@ class CalendarCreateSkill(ManifestSkill):
     async def run(self, ctx: AgentContext, title="", date_offset=0, time="", duration_minutes=None, **_) -> SkillResult:
         if asks_to_change_not_add(ctx.user_message):
             return self._fail("no tool to change events", "I can't move, cancel or delete calendar events yet, only add them.")
-        if time and not message_states_time(ctx.user_message):
+        now = self._now()
+        earlier = earlier_request(ctx.conversation_history, now)
+        said = " ".join([*earlier, ctx.user_message])
+        if not earlier and not asks_to_add(ctx.user_message) and not message_states_time(ctx.user_message) \
+                and relative_start(ctx.user_message, now) is None and not title_is_from_the_message(title, ctx.user_message):
+            # Nothing in these words asks for an event: the model replayed an old request from the conversation.
+            return self._fail("no calendar request in the message", "I didn't add anything to your calendar.")
+        soon = relative_start(said, now)
+        if soon is not None and not message_states_time(said):
+            time, date_offset = soon.strftime("%H:%M"), (soon.date() - now.date()).days
+            if not message_states_duration(said):
+                duration_minutes = None   # "in 10 mins" is when it starts, not how long it lasts
+        elif time and not message_states_time(said):
             time = ""   # the user named no time: the model's is a guess, so ask instead of booking it
-        if title and not title_is_from_the_message(title, ctx.user_message):
+        if title and not title_is_from_the_message(title, said):
             title = ""  # not the user's words (often an example copied from the prompt): ask what to call it
         try:
             name, offset, at, minutes = validate_new_event(title, date_offset, time, duration_minutes)
-            now = self._now()
             start, end = event_times(now, offset, at, minutes)
         except ValueError as e:
             sentence = str(e)

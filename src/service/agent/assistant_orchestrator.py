@@ -168,6 +168,8 @@ class AssistantOrchestrator(BaseAgent):
             state = self._session_state.get(ctx.session_id, ctx.speaker_id)
         active = self._active_for(ctx, state)
         history = self._conversation.turns if self._conversation is not None else []
+        # Skills that ask a question read the answer together with the request it answers (calendar_create).
+        ctx.conversation_history = [{"role": t.role, "content": t.content, "created_at": t.created_at} for t in history]
         logger.info(f"[turn] user={log_text(ctx.user_message)} voice={ctx.from_voice}")
         result = await self._decoder.decide(ctx.user_message, history, active)
         normalized, arg_notes = normalize_latin_arguments(result.decision, self._manifests)

@@ -118,6 +118,90 @@ def test_google_adapter_posts_the_event_without_attendees():
     assert event.title == "Review" and "attendees" not in http.sent[0] and http.sent[0]["start"]["dateTime"] == NOW.isoformat()
 
 
+# ---- follow-ups and relative times (the 2026-10-27 "sleep" exchange) ---------------------------------------------------
+
+LATE = datetime(2026, 10, 27, 22, 21, 46, tzinfo=NOW.tzinfo)
+SLEEP = "can you create event that i need to sleep in my calendar in next 10 mins?"
+
+
+def late_skill(fc, now=LATE):
+    return CalendarCreateSkill(fc, MANIFESTS["calendar_create"], now=lambda: now)
+
+
+def asked(question, at=LATE):
+    """The conversation so far: the sleep request, then the tool's own question, said at `at` (stored naive, local)."""
+    return [
+        {"role": "user", "content": SLEEP, "created_at": at.replace(tzinfo=None)},
+        {"role": "assistant", "content": question, "created_at": at.astimezone().replace(tzinfo=None)},
+    ]
+
+
+def test_in_next_ten_minutes_is_worked_out_from_the_clock_not_the_models_guess():
+    fc = FakeCalendar()
+    res = run(late_skill(fc).execute(ctx(SLEEP), title="Sleep", date_offset=0, time="22:21", duration_minutes=10))
+    assert res.success, res.metadata["spoken"]
+    (title, start, end), = fc.created
+    assert title == "Sleep" and (start.hour, start.minute) == (22, 31) and end - start == timedelta(hours=1)
+
+
+@pytest.mark.parametrize("phrase,minutes", [
+    ("in 10 mins", 10), ("in the next 15 minutes", 15), ("in an hour", 60), ("in half an hour", 30), ("in two hours", 120),
+])
+def test_relative_starts(phrase, minutes):
+    start = cal.relative_start(f"add yoga {phrase}", LATE)
+    assert start == (LATE + timedelta(minutes=minutes)).replace(second=0)
+
+
+def test_a_relative_start_past_midnight_lands_tomorrow():
+    fc = FakeCalendar()
+    res = run(late_skill(fc).execute(ctx("add a call with Ravi in 2 hours"), title="Call with Ravi", time="22:21"))
+    assert res.success and fc.created[0][1].day == 28 and fc.created[0][1].hour == 0
+    assert res.metadata["spoken"].startswith("Added Call with Ravi to your calendar tomorrow")
+
+
+def test_a_stated_length_is_kept_beside_a_relative_start():
+    fc = FakeCalendar()
+    run(late_skill(fc).execute(ctx("add a nap in 10 mins for 20 minutes"), title="Nap", duration_minutes=20))
+    (_, start, end), = fc.created
+    assert end - start == timedelta(minutes=20)
+
+
+def test_answering_the_time_question_keeps_the_title_from_the_request():
+    fc = FakeCalendar()
+    c = AgentContext(user_message="10:30 PM", conversation_history=asked(cal.ASK_TIME))
+    res = run(late_skill(fc, LATE + timedelta(seconds=40)).execute(c, title="Sleep", date_offset=0, time="22:30"))
+    assert res.success, res.metadata["spoken"]
+    assert fc.created[0][0] == "Sleep" and (fc.created[0][1].hour, fc.created[0][1].minute) == (22, 30)
+
+
+def test_answering_the_title_question_keeps_the_time_from_the_request():
+    fc = FakeCalendar()
+    history = [
+        {"role": "user", "content": "put something on my calendar at 11 pm", "created_at": LATE.replace(tzinfo=None)},
+        {"role": "assistant", "content": cal.ASK_TITLE, "created_at": LATE.astimezone().replace(tzinfo=None)},
+    ]
+    c = AgentContext(user_message="call it reading", conversation_history=history)
+    res = run(late_skill(fc).execute(c, title="Reading", time="23:00"))
+    assert res.success and fc.created[0][0] == "Reading"
+
+
+def test_an_old_question_does_not_turn_small_talk_into_a_booking():
+    fc = FakeCalendar()
+    c = AgentContext(user_message="hey veda, how are you doing?", conversation_history=asked(cal.ASK_TITLE))
+    res = run(late_skill(fc, LATE + timedelta(minutes=18)).execute(c, title="Sleep", date_offset=0, time="22:30"))
+    assert not res.success and fc.created == []
+    assert res.metadata["spoken"] == "I didn't add anything to your calendar."
+
+
+def test_without_a_question_just_asked_the_answer_alone_is_not_enough():
+    fc = FakeCalendar()
+    history = [{"role": "user", "content": SLEEP, "created_at": LATE.replace(tzinfo=None)},
+               {"role": "assistant", "content": "Nothing on your calendar today.", "created_at": LATE.replace(tzinfo=None)}]
+    c = AgentContext(user_message="10:30 PM", conversation_history=history)
+    res = run(late_skill(fc).execute(c, title="Sleep", time="22:30"))
+    assert not res.success and res.metadata["spoken"] == cal.ASK_TITLE and fc.created == []
+
+
 # ---- tasks must not swallow calendar entries -------------------------------------------------------------------------
 
 

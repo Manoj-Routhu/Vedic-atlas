@@ -67,6 +67,8 @@ def spoken_agenda(events: Sequence[CalendarEvent], label: str, *, multi_day: boo
 # ---- writing to the calendar ---------------------------------------------------------------------------------------------
 
 DEFAULT_DURATION_MIN = 60
+ASK_TITLE = "What should the event be called?"
+ASK_TIME = "What time should I set it for?"
 MAX_DURATION_MIN = 480
 _TITLE_MAX = 100
 # "17:00", "17:00:00", "5:30 pm", "5pm", "12 am": the model is asked for 24-hour HH:MM but does not always comply.
@@ -107,14 +109,14 @@ def validate_new_event(title, date_offset, at, duration) -> tuple[str, int, time
     The model supplies a day offset and a 24-hour "HH:MM"; every range check and the date itself are code."""
     name = clean_text(title, _TITLE_MAX)
     if not name:
-        raise ValueError("What should the event be called?")
+        raise ValueError(ASK_TITLE)
     if date_offset is None:
         date_offset = 0
     if isinstance(date_offset, bool) or not isinstance(date_offset, int) or not 0 <= date_offset <= MAX_DAYS_AHEAD:
         raise ValueError(f"I can only add events up to {MAX_DAYS_AHEAD} days ahead")
     clock_time = _parse_clock(at)
     if clock_time is None:
-        raise ValueError("What time should I set it for?")
+        raise ValueError(ASK_TIME)
     if duration is None:
         duration = DEFAULT_DURATION_MIN
     if isinstance(duration, bool) or not isinstance(duration, int) or not 5 <= duration <= MAX_DURATION_MIN:
@@ -150,6 +152,41 @@ _STATES_TIME = re.compile(
 )
 
 
+_RELATIVE = re.compile(
+    rf"\bin\s+(?:the\s+)?(?:next\s+)?(?:(half\s+an?)\s+hour|(\d{{1,3}}|an?|{_NUMBER_WORDS})\s*(minutes?|mins?|hours?|hrs?))\b",
+    re.IGNORECASE,
+)
+_STATES_DURATION = re.compile(
+    rf"\bfor\s+(?:an?\s+|half\s+an?\s+|\d{{1,3}}\s*|(?:{_NUMBER_WORDS})\s+)(?:minutes?|mins?|hours?|hrs?)\b|"
+    rf"\b\d{{1,3}}\s*(?:minutes?|mins?|hours?|hrs?)\s+long\b",
+    re.IGNORECASE,
+)
+
+
+def relative_start(text: str | None, now: datetime) -> datetime | None:
+    """"in 10 mins", "in the next half an hour", "in two hours": the start worked out from the clock. The model cannot do
+    this sum (it booked "in next 10 mins" at the current minute), so code does."""
+    match = _RELATIVE.search(text or "")
+    if not match:
+        return None
+    if match.group(1):
+        minutes = 30
+    else:
+        amount = match.group(2).lower()
+        words = _NUMBER_WORDS.split("|")
+        n = int(amount) if amount.isdigit() else 1 if amount in ("a", "an") else words.index(amount) + 1
+        minutes = n * (60 if match.group(3).lower().startswith("h") else 1)
+    if not 1 <= minutes <= MAX_DAYS_AHEAD * 24 * 60:
+        return None
+    return (now + timedelta(minutes=minutes)).replace(second=0, microsecond=0)
+
+
+def message_states_duration(text: str | None) -> bool:
+    """"for 30 minutes", "2 hours long". The model read "in next 10 mins" as a 10-minute event; a length counts only when
+    the user's words give one."""
+    return bool(_STATES_DURATION.search(text or ""))
+
+
 def message_states_time(text: str | None) -> bool:
     """Did the user's own words give a clock time ("5 pm", "17:30", "at six", "noon")?  A small model fills a required
     time with a plausible one ("15:00", the current minute) when none was said, so the skill trusts a time only when
@@ -167,6 +204,10 @@ _CHANGE_VERBS = re.compile(r"\b(cancel|delete|remove|move|reschedule|postpone|pu
 _WORD = re.compile(r"\w+", re.UNICODE)
 
 
+def asks_to_add(message: str | None) -> bool:
+    return bool(_ADD_VERBS.search(message or ""))
+
+
 def asks_to_change_not_add(message: str | None) -> bool:
     """"cancel my 5 pm meeting", "move it to 6": a change verb and no verb that adds. There is no tool for it yet."""
     text = message or ""
@@ -180,3 +221,42 @@ def title_is_from_the_message(title: str, message: str | None) -> bool:
     if not stems:
         return True
     return bool(stems & {w[:4] for w in _WORD.findall((message or "").lower())})
+
+
+# ---- answering the tool's own question ------------------------------------------------------------------------------------
+# "add sleep to my calendar" -> "What time should I set it for?" -> "10:30 PM". The answer alone names no event, so the
+# checks above read the request and its answers together. Only a question asked a moment ago counts: an old one must not
+# turn "how are you doing?" into a booking.
+
+FOLLOW_UP_WINDOW = timedelta(minutes=5)
+_MAX_ROUNDS = 3
+
+
+def _field(turn, name):
+    return turn.get(name) if isinstance(turn, dict) else getattr(turn, name, None)
+
+
+def _asks_for_event(turn) -> bool:
+    content = str(_field(turn, "content") or "")
+    return _field(turn, "role") == "assistant" and (ASK_TITLE in content or ASK_TIME in content)
+
+
+def earlier_request(history: Sequence | None, now: datetime) -> list[str]:
+    """The user's earlier messages, oldest first, when the conversation's last turn is this tool's question asked within
+    FOLLOW_UP_WINDOW; otherwise []."""
+    turns = list(history or [])
+    if not turns or not _asks_for_event(turns[-1]):
+        return []
+    asked_at = _field(turns[-1], "created_at")
+    if not isinstance(asked_at, datetime):
+        return []
+    if asked_at.tzinfo is None:
+        asked_at = asked_at.astimezone()   # stored as local wall time
+    if now - asked_at > FOLLOW_UP_WINDOW:
+        return []
+    said: list[str] = []
+    i = len(turns) - 1
+    while i >= 1 and len(said) < _MAX_ROUNDS and _asks_for_event(turns[i]) and _field(turns[i - 1], "role") == "user":
+        said.insert(0, str(_field(turns[i - 1], "content") or ""))
+        i -= 2
+    return said
