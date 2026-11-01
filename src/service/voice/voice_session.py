@@ -34,6 +34,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
+from core.filler import FILLER_PHRASES, FILLER_STILL_PHRASES, PhrasePicker
 from core.logging_config import logger, reset_voice_turn_id, set_voice_turn_id
 from domain.entities.agent_context import AgentContext
 from domain.entities.utterance import Utterance
@@ -46,8 +47,9 @@ from service.voice.utterance_collector import UtteranceCollector
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _SENTENCE_END_RE = re.compile(r"[.!?]+(?=\s)")
 _WAKE_ACKNOWLEDGEMENT = "Hey there, what's up?"
-_PROCESSING_ACKNOWLEDGEMENT = "Working on that."
-_PROCESSING_ACK_DELAY_SEC = 1.0
+_FILLER_FIRST_DELAY_SEC = 1.0
+_FILLER_REPEAT_SEC = 7.0
+_FILLER_MAX_COUNT = 3
 
 
 def _format_request_duration(elapsed_ms: float) -> str:
@@ -80,6 +82,11 @@ class VoiceSession:
         wake_engine: str = "none",
         wake_window_sec: float = 8.0,
         wake_cooldown_sec: float = 1.0,
+        filler_phrases: tuple[str, ...] | list[str] = FILLER_PHRASES,
+        filler_still_phrases: tuple[str, ...] | list[str] = FILLER_STILL_PHRASES,
+        filler_first_delay_sec: float = _FILLER_FIRST_DELAY_SEC,
+        filler_repeat_sec: float = _FILLER_REPEAT_SEC,
+        filler_max_count: int = _FILLER_MAX_COUNT,
         speaker_id: Any | None = None,
         require_known_speaker: bool = False,
         speaker_match_threshold: float = 0.6,
@@ -145,7 +152,15 @@ class VoiceSession:
         self._capture_started_at: float | None = None
         self._last_transcript = ""
         self._last_reply = ""
-        self._last_processing_acknowledgement = ""
+        # "Let me think." style phrases spoken while the model works. Their audio is rendered once at start-up so
+        # playing one costs no CPU while the model is busy.
+        self._filler_phrases = list(filler_phrases)
+        self._filler_still_phrases = list(filler_still_phrases) or list(filler_phrases)
+        self._filler_first_delay_sec = filler_first_delay_sec
+        self._filler_repeat_sec = filler_repeat_sec
+        self._filler_max_count = filler_max_count
+        self._filler_pcm: dict[str, bytes] = {}
+        self._turn_fillers: list[str] = []   # said this turn, so the echo guard knows them
 
     # -- Lifecycle --------------------------------------------------------
 
@@ -186,8 +201,26 @@ class VoiceSession:
             keep_open = getattr(self._speaker, "keep_open", None)
             if callable(keep_open):
                 await asyncio.to_thread(keep_open, self._tts.sample_rate)
+            await self._render_fillers()
         except Exception as e:
             logger.warning(f"[voice] output warmup skipped: {e}")
+
+    async def _render_fillers(self) -> None:
+        """Synthesize every filler phrase once and keep the audio (about 1 MB in all)."""
+        if self._tts is None:
+            return
+        started = time.perf_counter()
+        for phrase in dict.fromkeys([*self._filler_phrases, *self._filler_still_phrases]):
+            try:
+                async with self._speech_lock:
+                    pcm = b"".join([chunk async for chunk in self._tts.synthesize(phrase) if chunk])
+                if pcm:
+                    self._filler_pcm[phrase] = pcm
+            except Exception as e:
+                logger.warning(f"[voice] could not pre-render filler {phrase!r}: {e}")
+        logger.info(
+            f"[voice] {len(self._filler_pcm)} filler phrases ready in {(time.perf_counter() - started) * 1000:.0f} ms"
+        )
 
     async def stop(self) -> None:
         self._stop.set()
@@ -791,7 +824,7 @@ class VoiceSession:
         got = {w for w in _WORD_RE.findall(heard.lower()) if len(w) > 2}
         if not got:
             return False
-        for spoken in (self._last_reply, self._last_processing_acknowledgement):
+        for spoken in (self._last_reply, *self._turn_fillers):
             said = {w for w in _WORD_RE.findall(spoken.lower()) if len(w) > 2}
             if said and len(said & got) / len(got) >= 0.6:
                 return True
@@ -852,10 +885,8 @@ class VoiceSession:
         chunk_count = 0
         stream_finished_ms: float | None = None
         reply_audio_started = asyncio.Event()
-        acknowledgement_started = asyncio.Event()
-        acknowledgement_task = asyncio.create_task(
-            self._speak_processing_acknowledgement(reply_audio_started, acknowledgement_started)
-        )
+        self._turn_fillers = []
+        filler_task = asyncio.create_task(self._speak_fillers(reply_audio_started))
         try:
             async for chunk in self._supervisor.execute_stream(ctx, cancel_event=cancel):
                 if not chunk:
@@ -901,33 +932,50 @@ class VoiceSession:
                 f"first_chunk_ms={first_chunk} first_audio_queued_ms={first_audio} "
                 f"chunks={chunk_count} chars={sum(map(len, parts))}"
             )
-            if not acknowledgement_started.is_set() and not acknowledgement_task.done():
-                acknowledgement_task.cancel()
+            reply_audio_started.set()   # also ends the filler loop; one already playing finishes first
             try:
-                await acknowledgement_task
+                await filler_task
             except asyncio.CancelledError:
                 pass
             await self._after_speaking()
         return "".join(parts).strip()
 
-    async def _speak_processing_acknowledgement(
-        self,
-        reply_audio_started: asyncio.Event,
-        acknowledgement_started: asyncio.Event,
-    ) -> None:
-        await asyncio.sleep(_PROCESSING_ACK_DELAY_SEC)
+    async def _speak_fillers(self, reply_started: asyncio.Event) -> None:
+        """While the model works, say a short random phrase after a moment, then now and then if the wait goes on.
+
+        Stops the moment the reply starts. A phrase already playing finishes first, because the reply waits on the
+        speech lock. The phrases are never the same twice in a row.
+        """
+        first = PhrasePicker(self._filler_phrases)
+        later = PhrasePicker(self._filler_still_phrases)
         try:
-            async with self._speech_lock:
-                if reply_audio_started.is_set():
+            for count in range(self._filler_max_count):
+                delay = self._filler_first_delay_sec if count == 0 else self._filler_repeat_sec
+                try:
+                    await asyncio.wait_for(reply_started.wait(), timeout=delay)
+                    return   # the reply began first
+                except asyncio.TimeoutError:
+                    pass
+                phrase = (first if count == 0 else later).pick()
+                if not phrase:
                     return
-                acknowledgement_started.set()
-                self._last_processing_acknowledgement = _PROCESSING_ACKNOWLEDGEMENT
-                logger.info("[voice][flow] stage=processing_acknowledgement")
-                spoke, _ = await self._synthesize_pcm(_PROCESSING_ACKNOWLEDGEMENT)
-                if spoke:
-                    await self._wait_playback()
+                async with self._speech_lock:
+                    if reply_started.is_set():
+                        return
+                    self._turn_fillers.append(phrase)
+                    logger.info(f"[voice][flow] stage=filler n={count + 1} text={phrase!r}")
+                    pcm = self._filler_pcm.get(phrase)
+                    if pcm:
+                        self._speaker.play_pcm(pcm, self._tts.sample_rate)
+                        spoke = True
+                    else:   # not rendered yet (still booting) or its render failed: say it the slow way
+                        spoke, _ = await self._synthesize_pcm(phrase)
+                    if spoke:
+                        await self._wait_playback()
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.warning(f"[voice] processing acknowledgement failed: {e}")
+            logger.warning(f"[voice] filler failed: {e}")
 
     @staticmethod
     def _pop_sentence(buffer: str) -> tuple[str, str]:

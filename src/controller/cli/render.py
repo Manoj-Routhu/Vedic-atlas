@@ -13,18 +13,40 @@ In a pipe: raw text dumped as-is so callers can compose with shell tools.
 from __future__ import annotations
 
 import sys
+import time
 from typing import Iterable
 
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.spinner import Spinner
 from rich.text import Text
+
+from core.filler import CLI_STATUS_WORDS, PhrasePicker
+
+_WORD_CHANGE_SEC = 3.0
 
 _EMPTY_HINT = (
     "[the model returned no content. usually means the local inference "
     "backend (ollama/llama.cpp) isn't running or isn't reachable — check "
     "the server log for details.]"
 )
+
+
+class _Waiting:
+    """Spinner with a simple word beside it ("Thinking…") that changes every few seconds while we wait for the first
+    token. Live's refresh thread re-renders this, so it keeps changing while the stream read blocks."""
+
+    def __init__(self) -> None:
+        self._picker = PhrasePicker(CLI_STATUS_WORDS)
+        self._spinner = Spinner("dots", text=Text(self._picker.pick() + "…", style="dim"))
+        self._changed_at = time.monotonic()
+
+    def __rich__(self) -> Spinner:
+        if time.monotonic() - self._changed_at >= _WORD_CHANGE_SEC:
+            self._changed_at = time.monotonic()
+            self._spinner.update(text=Text(self._picker.pick() + "…", style="dim"))
+        return self._spinner
 
 
 def _is_tty() -> bool:
@@ -70,7 +92,7 @@ def stream_to_terminal(tokens: Iterable[str], *, console: Console | None = None)
 
     full = ""
     text = Text()
-    with Live(text, console=c, refresh_per_second=24, transient=True) as live:
+    with Live(_Waiting(), console=c, refresh_per_second=24, transient=True) as live:
         for tok in tokens:
             full += tok
             text.append(tok)
