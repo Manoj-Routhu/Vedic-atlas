@@ -357,12 +357,12 @@ def build_app_state(app: FastAPI) -> None:
         voice = app.state.voice_session
         music = MusicService(
             YtDlpResolver(mc.ytdlp_path, mc.search_results, mc.search_timeout_sec), MpvPlayer(mc.mpv_path, mc.ytdlp_path),
-            capture_gate, max_seconds=mc.max_minutes * 60, is_busy=voice.is_busy if voice is not None else None,
+            capture_gate, max_seconds=mc.max_minutes * 60, max_song_seconds=mc.max_song_minutes * 60, is_busy=voice.is_busy if voice is not None else None,
         )
         capture_gate.add_mute_listener(music.on_mute_change)   # the mute switch and /mute /unmute are the guaranteed stop
         skill_registry.register(MusicSkill(tool_manifests["music_control"], music))
         app.state.music = music
-        logger.info(f"[music] on: songs play through mpv for at most {mc.max_minutes:g} minute(s); the mic is closed meanwhile")
+        logger.info(f"[music] on: songs play through mpv to their end (at most {mc.max_song_minutes:g} min; {mc.max_minutes:g} min when the length is unknown); the mic is closed meanwhile")
 
     app.state.reminders = build_reminders(
         cfg, calendar=calendar_port, tasks=task_service, voice_session=app.state.voice_session,

@@ -323,7 +323,8 @@ class MusicConfig(BaseModel):
     """music: section. Plays a song by name through mpv, found with yt-dlp (docs/13). OFF by default."""
 
     enabled: bool = False
-    max_minutes: float = Field(default=5.0, gt=0, le=60)   # a backstop: playback always stops after this long
+    max_minutes: float = Field(default=5.0, gt=0, le=60)   # a backstop for a song whose length is unknown (a live stream)
+    max_song_minutes: float = Field(default=30.0, gt=0, le=240)   # the longest a song of known length may play (it ends at its own end)
     search_results: int = Field(default=5, ge=1, le=10)
     search_timeout_sec: float = Field(default=12.0, gt=0)
     mpv_path: str = "mpv"

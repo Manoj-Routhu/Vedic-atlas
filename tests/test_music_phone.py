@@ -100,7 +100,7 @@ def test_status_follows_the_song_from_idle_to_starting_to_playing_and_back():
         assert music.status().state in ("starting", "playing")
         await settle(music)
         s = music.status()
-        assert (s.title, s.limit_s, s.duration_s) == ("Tum Hi Ho - Arijit Singh", 300, 262.0)
+        assert (s.title, s.limit_s, s.duration_s) == ("Tum Hi Ho - Arijit Singh", 277.0, 262.0)   # its own length + 15 s of slack, not max_seconds
         assert s.elapsed_s is not None and s.elapsed_s < 1
         await music.stop("asked")
         assert music.status().state == "idle" and gate.closed == 0
@@ -131,7 +131,7 @@ def test_pause_by_user_pauses_the_player_and_the_clock_and_resume_carries_on():
 
 def test_the_time_limit_does_not_run_while_paused():
     async def go():
-        music, player, _ = make(max_seconds=0.3)
+        music, player, _ = make(Resolver([Candidate("Live radio", "", "https://x/live", None)]), max_seconds=0.3)
         music.start()
         await music.play("tum hi ho")
         await settle(music)
@@ -143,6 +143,59 @@ def test_the_time_limit_does_not_run_while_paused():
         await asyncio.sleep(0.05)
         assert music.status().state == "playing"                      # about 0.15 s of its 0.3 s are left
         await settle(music, "idle")                                   # and then it does stop by itself
+
+    run(go)
+
+
+# ---- a song plays to its own end, not to a fixed number of minutes ---------------------------------------------------
+
+def test_a_song_of_known_length_plays_past_the_max_minutes_backstop():
+    async def go():
+        music, player, _ = make(max_seconds=0.1, end_grace_sec=5)       # the backstop is 0.1 s; the song is 262 s long
+        music.start()
+        await music.play("tum hi ho")
+        await settle(music)
+        await asyncio.sleep(0.4)
+        assert music.status().state == "playing" and music.status().limit_s == 267.0
+        await music.stop("asked")
+
+    run(go)
+
+
+def test_a_song_of_unknown_length_still_stops_at_the_backstop():
+    async def go():
+        music, player, gate = make(Resolver([Candidate("Live radio", "", "https://x/live", None)]), max_seconds=0.15)
+        music.start()
+        await music.play("radio")
+        await settle(music)
+        assert music.status().limit_s == 0.15
+        await settle(music, "idle")
+        assert gate.closed == 0
+
+    run(go)
+
+
+def test_a_very_long_song_stops_at_the_ceiling():
+    async def go():
+        music, player, _ = make(Resolver([Candidate("10 hour mix", "", "https://x/mix", 36000.0)]),
+                                max_seconds=0.1, max_song_seconds=0.2)
+        music.start()
+        await music.play("mix")
+        await settle(music)
+        assert music.status().limit_s == 0.2
+        await settle(music, "idle")
+
+    run(go)
+
+
+def test_the_end_of_a_short_song_is_cut_after_the_slack():
+    async def go():
+        music, player, _ = make(Resolver([Candidate("Jingle", "", "https://x/j", 0.1)]), max_seconds=5, end_grace_sec=0.1)
+        music.start()
+        await music.play("jingle")
+        await settle(music)
+        assert 0.19 < music.status().limit_s < 0.21                     # 0.1 s of song + 0.1 s of slack
+        await settle(music, "idle")
 
     run(go)
 

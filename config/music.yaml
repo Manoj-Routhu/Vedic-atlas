@@ -5,7 +5,7 @@
 # mpv AND yt-dlp are installed, and is ignored when privacy.online.enabled is false (fully offline).
 #
 # While a song plays the microphone is held closed. The mute switch, /mute and /unmute (any mute change) stop the song;
-# after that the song is gone. The song also stops by itself when it ends or after max_minutes.
+# after that the song is gone. The song plays to its own end; the limits below only stop one that would never end.
 #
 # Needs on the device (the setup scripts install both; Veda checks at startup and logs what is missing):
 #   yt-dlp : installed by `pip install -e .` (it is a normal dependency)
@@ -13,7 +13,8 @@
 #            Windows: `winget install --id shinchiro.mpv -e` (scripts/setup_windows.ps1); Veda also finds it in
 #            C:\Program Files\MPV Player without it being on PATH.
 enabled: true
-max_minutes: 5            # backstop: playback is always stopped after this long
+max_minutes: 5            # backstop for a song whose length is unknown (a live stream never ends): stopped after this long
+max_song_minutes: 30      # the longest a song of KNOWN length may play. Shorter songs end at their own end (+15 s slack)
 search_results: 5         # YouTube hits looked at; the one whose title best matches the request is played
 search_timeout_sec: 12
 mpv_path: mpv           # found on PATH, or in mpv's usual Windows folders; a full path also works

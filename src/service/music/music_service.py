@@ -35,13 +35,18 @@ class MusicService:
         gate,
         *,
         max_seconds: float = 300.0,
+        max_song_seconds: float = 1800.0,
+        end_grace_sec: float = 15.0,
         is_busy: Callable[[], bool] | None = None,
         quiet_for_sec: float = 1.0,
         quiet_timeout_sec: float = 30.0,
         poll_sec: float = 0.25,
     ):
         self._resolver, self._player, self._gate = resolver, player, gate
-        self._max_seconds = max_seconds
+        self._max_seconds = max_seconds                  # backstop for a song whose length is not known (a live stream)
+        self._max_song_seconds = max(max_song_seconds, max_seconds)   # the longest a song of KNOWN length may play
+        self._end_grace = end_grace_sec                  # slack past the song's end: the player's own end-of-file stops it
+        self._limit_s = max_seconds                      # the limit of the song now playing (see _limit_for)
         self._is_busy = is_busy                 # the voice session's "speaking / in a turn" probe; None = no voice
         self._quiet_for, self._quiet_timeout, self._poll = quiet_for_sec, quiet_timeout_sec, poll_sec
         self._state = IDLE
@@ -90,11 +95,22 @@ class MusicService:
         if self._state == IDLE or self._track is None:
             return MusicStatus("idle")
         if self._state == STARTING:
-            return MusicStatus("starting", title=self._track.title, limit_s=self._max_seconds or None, duration_s=self._track.duration_sec)
+            return MusicStatus("starting", title=self._track.title, limit_s=self._limit_for(self._track) or None, duration_s=self._track.duration_sec)
         return MusicStatus(
             "paused" if self._user_paused else "playing", title=self._track.title, elapsed_s=self.elapsed_s,
-            limit_s=self._max_seconds or None, duration_s=self._track.duration_sec,
+            limit_s=self._limit_s or None, duration_s=self._track.duration_sec,
         )
+
+    def _limit_for(self, track: Track) -> float:
+        """Seconds of play after which the song is stopped. A song of known length plays to its end (plus a little slack, so
+        a rounded length cannot cut the last notes; the player's own end-of-file normally stops it first), up to
+        `max_song_seconds`. A song of unknown length (a live stream never ends) stops at `max_seconds`. 0 = no limit."""
+        if self._max_seconds <= 0:
+            return 0.0
+        length = track.duration_sec
+        if length and length > 0:
+            return min(length + self._end_grace, self._max_song_seconds)
+        return self._max_seconds
 
     # ---- play / stop --------------------------------------------------------------------------------------------
 
@@ -147,8 +163,12 @@ class MusicService:
             await self._player.start(track.url, self._on_finished)
             self._state = PLAYING
             self._elapsed_before, self._stretch_start = 0.0, time.monotonic()
-            self._arm_limit(self._max_seconds)
-            logger.info(f"[music] playing {log_text(track.title)} (limit {self._max_seconds:.0f}s)")
+            self._limit_s = self._limit_for(track)
+            self._arm_limit(self._limit_s)
+            logger.info(
+                f"[music] playing {log_text(track.title)} (length "
+                f"{'unknown' if not track.duration_sec else f'{track.duration_sec:.0f}s'}, limit {self._limit_s:.0f}s)"
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -181,7 +201,7 @@ class MusicService:
         if self._limit is not None:
             self._limit.cancel()
             self._limit = None
-        if self._loop is None or self._max_seconds <= 0:
+        if self._loop is None or self._limit_s <= 0:
             return
         self._limit = self._loop.call_later(max(seconds, 0.0), lambda: asyncio.ensure_future(self.stop("time limit")))
 
@@ -220,7 +240,7 @@ class MusicService:
                 self._limit = None
         else:
             self._stretch_start = now
-            self._arm_limit(self._max_seconds - self._elapsed_before)
+            self._arm_limit(self._limit_s - self._elapsed_before)
         return True
 
     async def pause(self) -> None:

@@ -347,3 +347,12 @@ def test_static_control_prompt_fits_the_budget_in_real_tokens():
     system = _composer().control_stage("x").system
     real = len(llm.tokenize(system.encode("utf-8"), add_bos=False))
     assert real + 400 <= PromptBudgets().control, f"static control prompt is {real} real tokens: no room left for history"
+
+
+def test_the_prompt_forbids_replaying_a_tool_call_from_recent_or_active():
+    """2026-11-01: with history always shown, "I am feeling bored and lonely" replayed the earlier song request. The rule
+    that stops it must stay in the static prompt (and in the budget)."""
+    prompt = _composer().control_stage("these days I am feeling bored and lonely")
+    text = prompt.text if hasattr(prompt, "text") else str(prompt)
+    assert "NEVER repeat or replay a tool call from RECENT or ACTIVE" in text
+    assert "A feeling, a statement or small talk asks for no tool" in text

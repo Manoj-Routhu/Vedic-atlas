@@ -65,7 +65,7 @@ describe('nothing playing', () => {
     expect(screen.getByLabelText(/Plays on your Pi's speaker. This phone is the remote/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Play' }).props.accessibilityState.disabled).toBe(true);
     expect(screen.getByText(/microphone is closed while a song plays/)).toBeTruthy();
-    expect(screen.getByText('A song stops by itself after 5 minutes.')).toBeTruthy();
+    expect(screen.getByText('A song plays to its end, and then the microphone opens again.')).toBeTruthy();
     expect(screen.getByText(/Your voice never does/)).toBeTruthy();
   });
 

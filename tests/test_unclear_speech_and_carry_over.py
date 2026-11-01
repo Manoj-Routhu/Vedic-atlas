@@ -207,7 +207,7 @@ def test_shipped_defaults_are_the_cheaper_ones():
     from core.config import load_full_config
     cfg = load_full_config()
     assert cfg.prompting.control_history_exchanges == 2 and cfg.prompting.control_turn_chars == 200
-    assert cfg.agents.session_ttl_sec == 300 and cfg.prompting.history_for_follow_ups_only is True
+    assert cfg.agents.session_ttl_sec == 300 and cfg.prompting.history_for_follow_ups_only is False   # history is always shown (decided 2026-11-01: "help me with first lesson" lost its topic)
     assert cfg.inference.prompt_cache_mb == 768        # the Pi's limit; the laptop must not use more
     assert cfg.audio.stt_unclear_below == -1.0 and cfg.audio.stt_shaky_below == -0.7
 

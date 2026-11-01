@@ -15,7 +15,7 @@ Why the Pi and not the phone:
 
 ## 2. Rules that do not change
 
-- While a song plays, **the Pi's microphone is closed** (one mic, no echo cancellation: the wake word cannot be heard through music). Any mute or unmute, Stop, the end of the song, or the time limit (5 minutes, `music.max_minutes`) opens it again.
+- While a song plays, **the Pi's microphone is closed** (one mic, no echo cancellation: the wake word cannot be heard through music). Any mute or unmute, Stop, the end of the song, or a time limit opens it again. A song plays to its own end (+15 s of slack, at most `music.max_song_minutes`, 30 by default); one whose length is unknown, such as a live stream, stops after `music.max_minutes` (5).
 - A song starts only after Veda has finished talking, so "Playing X." is never talked over.
 - Only the search words leave the home (yt-dlp and mpv open their own connection to YouTube). Voice never does: the phone turns speech into text on the phone itself.
 - Music is on only when `music.enabled` is true, `privacy.online.enabled` is true, and `mpv` and `yt-dlp` are installed.

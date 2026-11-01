@@ -238,7 +238,7 @@ export function MusicView({ store, onSettings, micAvailable = false }: Props) {
             Good to know
           </Text>
           <Fact icon="mic-off" text="Veda's microphone is closed while a song plays. Stop the song to talk to it again." />
-          <Fact icon="clock" text={`A song stops by itself after ${info.limitS ? Math.round(info.limitS / 60) : 5} minutes.`} />
+          <Fact icon="clock" text="A song plays to its end, and then the microphone opens again." />
           <Fact icon="globe" text="Only the words you give leave your home, to find the song. Your voice never does." />
         </View>
       </>

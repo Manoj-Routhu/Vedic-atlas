@@ -218,7 +218,7 @@ def test_the_end_of_a_voice_turn_cannot_reopen_the_mic_while_the_song_plays():
 
 
 def test_the_time_limit_stops_the_song_and_reopens_the_mic():
-    switch, audio, gate, player, resolver, music = rig(max_seconds=0.15)
+    switch, audio, gate, player, resolver, music = rig([hit("Live radio", duration=None)], max_seconds=0.15)   # length unknown
 
     async def go():
         music.start()

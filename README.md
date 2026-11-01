@@ -321,7 +321,7 @@ text-to-speech run on the phone. Design docs: [`docs/15-vision-mobile-design.md`
 
 - **Music**: `MusicService` (states idle, starting, playing, paused) searches YouTube with `yt-dlp` and plays with `mpv` over
   its IPC socket. The microphone stays closed while a song plays, a reminder pauses the song while it is spoken, and a
-  song stops after 5 minutes of played time. The phone's Music tab is a remote for it:
+  song plays to its own end (a song of unknown length, such as a live stream, stops after 5 minutes; none runs past 30). The phone's Music tab is a remote for it:
   [`docs/17-music-in-the-app.md`](docs/17-music-in-the-app.md). This is the one documented exception to the network
   allow-list (only the search words leave the device).
 - **Reminders**: stored as tasks with a time, spoken once, even when the voice loop is off, waiting for a reply or a song to
