@@ -78,6 +78,8 @@ def build_voice_session(cfg: AppConfig, *, audio, capture_gate, supervisor, even
         wake_cooldown_sec=cfg.audio.wake_cooldown_sec,
         filler_phrases=cfg.audio.filler_phrases,
         filler_still_phrases=cfg.audio.filler_still_phrases,
+        filler_phrases_hi=cfg.audio.filler_phrases_hi,
+        filler_still_phrases_hi=cfg.audio.filler_still_phrases_hi,
         filler_first_delay_sec=cfg.audio.filler_first_delay_sec,
         filler_repeat_sec=cfg.audio.filler_repeat_sec,
         filler_max_count=cfg.audio.filler_max_count,

@@ -31,6 +31,25 @@ FILLER_STILL_PHRASES: tuple[str, ...] = (
     "Just a bit more.",
 )
 
+# The same, for a Hindi turn (spoken by the Hindi voice). Short, plain, in Devanagari.
+HINDI_FILLER_PHRASES: tuple[str, ...] = (
+    "सोचने दीजिए।",
+    "एक पल।",
+    "हम्म, देखता हूँ।",
+    "एक सेकंड।",
+    "देख रहा हूँ।",
+    "ज़रा रुकिए।",
+    "चेक कर रहा हूँ।",
+    "ठीक है, देखता हूँ।",
+)
+
+HINDI_FILLER_STILL_PHRASES: tuple[str, ...] = (
+    "अभी भी लगा हूँ।",
+    "बस थोड़ा और।",
+    "लगभग हो गया।",
+    "थोड़ा और समय दीजिए।",
+)
+
 # CLI spinner words (no punctuation; the spinner adds the dots).
 CLI_STATUS_WORDS: tuple[str, ...] = (
     "Thinking",

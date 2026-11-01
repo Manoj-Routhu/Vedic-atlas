@@ -293,6 +293,12 @@ class AudioConfig(BaseModel):
         "Checking.", "Looking into it.", "Give me a moment.", "Let me check.", "Okay, working on it.",
     ]
     filler_still_phrases: list[str] = ["Still on it.", "Almost there.", "Still working on it.", "Just a bit more."]
+    # The same for a Hindi turn (the turn's text is in Devanagari). Spoken by the Hindi voice, so they must be Hindi.
+    filler_phrases_hi: list[str] = [
+        "सोचने दीजिए।", "एक पल।", "हम्म, देखता हूँ।", "एक सेकंड।",
+        "देख रहा हूँ।", "ज़रा रुकिए।", "चेक कर रहा हूँ।", "ठीक है, देखता हूँ।",
+    ]
+    filler_still_phrases_hi: list[str] = ["अभी भी लगा हूँ।", "बस थोड़ा और।", "लगभग हो गया।", "थोड़ा और समय दीजिए।"]
     filler_first_delay_sec: float = Field(default=1.0, ge=0.0, le=30.0)
     filler_repeat_sec: float = Field(default=7.0, ge=1.0, le=60.0)
     filler_max_count: int = Field(default=3, ge=0, le=10)
