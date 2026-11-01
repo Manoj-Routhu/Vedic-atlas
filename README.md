@@ -428,6 +428,7 @@ including questions by voice, Chat with approvals, Control, Settings); music on 
 
 1. **Everything on the Raspberry Pi under load.** RAM with both models loaded, photo latency, voice stutter, and CPU temperature
    are still to be measured. A tool decision took about 3 s (tuned 1.7B) to 13 s (4B) on a laptop CPU; a Pi will be slower.
+   Turn latency on the Pi is now measured for a few turns: see [Pi turn latency, 2026-11-01](#pi-turn-latency-2026-11-01).
 2. **Music on the Pi**: `mpv` pause and the Bluetooth speaker have not been verified there. The Pi's `yt-dlp` may be too old
    for YouTube; the version installed by `pip` in the project environment is the one Veda should use.
 3. **Tuned router**: the fine-tuned 1.7B model is not part of the shipped setup; the first Pi run uses the untuned base model.
@@ -437,6 +438,35 @@ including questions by voice, Chat with approvals, Control, Settings); music on 
    (font, voice picker, TalkBack switch) do not match the design canvas yet.
 6. **Not ready for the Play Store**: plain HTTP on the LAN, no privacy policy, no in-app reporting of AI content. It is a
    sideloaded prototype.
+
+### Pi turn latency, 2026-11-01
+
+Read from `data/veda-server.log` on the Raspberry Pi 5, Qwen3-4B Q4_K_M with the Whisper models, English and Hindi on. This
+is one evening of about 15 turns, mostly typed, so treat it as an order of magnitude, not a benchmark. The server process held
+5.7-6.4 GB of memory and 127-170% CPU.
+
+| Measure | Result |
+|---|---|
+| First turn after a restart (prompt not cached) | **201 s**: 3062 prompt tokens evaluated in 196 s |
+| Control decision, warm (history always shown) | 18.5-28.8 s |
+| A typed tool turn, start to reply (control + a 3-3.7 s search; template reply costs 0 s) | 27-32 s |
+| Where a warm control decision goes | about 150 new prompt tokens in 11-17 s (about 10 tokens/s), then about 30 tokens generated in about 10 s (about 3 tokens/s) |
+| One English voice turn | STT 8.4 s for 3.6 s of audio (real-time factor 2.3); 47 s in all, including speaking |
+| Hindi speech-to-text (`whisper-small`) | 10.8-13 s for 2.8-4.7 s of audio (real-time factor 2.8-3.9) |
+| Hindi turn, start to spoken reply (earlier run, history only for follow-ups) | 61-89 s: control 18-33 s, then the reply translation 6.6-38 s |
+
+**History in every prompt.** `history_for_follow_ups_only` is now `false` in `config/prompting.yaml`, so the control prompt
+always carries the last 2 exchanges. The prompt grew from about 3050 to about 3130-3200 tokens, which is 30-60 more new
+tokens a turn, or about 3-6 s. It was 9-33 s per decision before the change, so the cost is small next to the model's speed.
+In a guitar test ("teach me guitar", "first lesson in it", "chords in it", "no, I am asking about chords") the topic
+survived 2 of 3 follow-ups. The miss repeated the earlier search because the stale `ACTIVE` search line pulled the model
+back to it. The cricket-news leak that the old filter prevented has not been re-tested.
+
+**Hindi accuracy (same evening).** `whisper-small` mishears Hindi even when its confidence looks fine (average log-probability
+-0.37 to -0.42): "अमेरिका में तापमान" came back as "अमिर्का में तात्मान", "दिल्ली और मुंबई" as "देली और मुमबाई". One 3 s clip
+returned one word 44 times (dropped by the artefact filter). Misspelt names then reach the tools: a misspelt song query found
+nothing, and a weather lookup for "Amirka" failed after the geocoder timed out (10.5 s). The Delhi-Mumbai answer said the sources
+gave two different numbers and never stated the distance. Hindi filler phrases fired correctly on every Hindi turn.
 
 **Known design gaps** (from [`docs/12-memory-layer.md`](docs/12-memory-layer.md) section 7):
 
