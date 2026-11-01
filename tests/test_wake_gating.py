@@ -88,3 +88,26 @@ def test_arm_disarm_and_expiry():
     assert s._armed_expired() is True
     s._disarm()
     assert s._is_armed() is False
+
+def test_speaking_wipes_the_detector_window_and_starts_a_cooldown():
+    class _ResettableWake(_FrameWake):
+        resets = 0
+
+        def reset(self):
+            self.resets += 1
+
+    wake = _ResettableWake()
+    session = _session(wake)
+    session._wake_buffer = b"stale"
+
+    before = time.monotonic()
+    session._clear_wake_state()
+
+    assert wake.resets == 1
+    assert session._wake_buffer == b""
+    assert session._wake_ignore_until >= before + session._wake_cooldown_sec - 0.01
+
+
+def test_wake_engine_without_reset_is_tolerated():
+    session = _session(_HotkeyWake())
+    session._clear_wake_state()  # must not raise

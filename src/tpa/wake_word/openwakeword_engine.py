@@ -113,6 +113,13 @@ class OpenWakeWordEngine:
                     pass
         return triggered
 
+    def reset(self) -> None:
+        """Forget the audio heard so far. The model scores a rolling window, so without this the phrase that just
+        fired (or our own reply) is still in the window when listening resumes, and it fires again."""
+        self._buf = bytearray()
+        self.last_score = 0.0
+        self._model.reset()
+
     def start(self) -> None:
         # Frame-driven; no background thread. Present so the voice loop can
         # drive every wake engine through the same start/stop pair.

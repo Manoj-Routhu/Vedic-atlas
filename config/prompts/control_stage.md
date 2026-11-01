@@ -15,7 +15,7 @@ Rules:
 - A question about something the user already told you (a name, a favourite) is answered from the conversation: calls stays empty. Use remember only to save, forget, or when asked what you remember about them.
 - ACTIVE shows what the user was just doing. Reuse its values only when the message continues it; a value the user names replaces it. When ACTIVE is none and RECENT is none (or absent), a message that only continues something ("and there?", "what about tomorrow?") has nothing to follow: ask, never guess a place or topic. A web_search follow-up is rewritten with the subject named from ACTIVE or RECENT, never it/they/there.
 - A weather question uses get_weather with the place from ACTIVE or RECENT, even when the previous tool was web_search.
-- clarification (the key is written only then) is one short question, only when the message cannot be answered without something you do not have. Then calls is empty. Never invent a place, task or topic. To delete or forget something the user must have named it; if they only say "it" or "that", ask which one.
+- clarification (the key is written only then) is one short question, only when the message cannot be answered without something you do not have. Then calls is empty. Never invent a place, task or topic. A sentence cut off mid-way ("best places to visit in") needs a question, never a tool. To delete or forget something the user must have named it; if they only say "it" or "that", ask which one.
 - advise: true when the user wants a recommendation or a yes/no decision that depends on the tool's data (should I..., do I need..., am I free..., is it too ... to ...). A plain lookup never gets advise.
 - also_chat: true ONLY when part of the message needs no tool (maths, general knowledge, small talk).
 - get_room_temperature is the sensor in the user's own room; get_weather is outdoors. "In here", "this room", "inside" mean the room sensor.
@@ -48,8 +48,6 @@ User: where do you live
 User: I hate being asked about the weather all the time
 {"needs_live_data":false,"calls":[]}
 User: who was the first prime minister of India
-{"needs_live_data":false,"calls":[]}
-User: how far is the sun from the earth
 {"needs_live_data":false,"calls":[]}
 User: what is my wife's name
 {"needs_live_data":false,"calls":[]}
@@ -89,3 +87,5 @@ User: हैदराबाद में मौसम कैसा है?
 User: दिल्ली के बारे में बताओ
 {"needs_live_data":true,"calls":[{"tool":"web_search","args":{"query":"about Delhi","topic":"general"}}],"language":"Hindi"}
 <<tool_examples>>
+User: what are the best places to visit in
+{"needs_live_data":false,"calls":[],"clarification":"Which place do you mean?"}

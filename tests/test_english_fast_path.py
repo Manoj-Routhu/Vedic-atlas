@@ -102,7 +102,7 @@ def test_shipped_audio_config_defaults_to_the_fast_english_path():
     audio = load_full_config().audio
     assert audio.stt_language == "en"
     assert audio.stt_english_model_path
-    assert audio.vad.silence_ms == 400          # every utterance waits this long for end of speech
+    assert audio.vad.silence_ms == 700          # a pause under 0.7 s must not end the question (400 cut "best places to visit in" short)
 
 
 # ---- control decode: language is optional -------------------------------------

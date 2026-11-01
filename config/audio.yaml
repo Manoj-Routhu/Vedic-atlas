@@ -60,6 +60,6 @@ vad:
   noise_adapt: 0.05
   aggressiveness: 2
   start_frames: 3
-  silence_ms: 400           # end-of-speech wait: every utterance pays it. Hindi speakers who pause between phrases may need 700
+  silence_ms: 700           # a pause under 0.7 s does not end the question (400 cut "best places to visit in" short)
   max_utterance_sec: 10.0   # shorter utterance cap
   pre_roll_frames: 5

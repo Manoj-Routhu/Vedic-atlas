@@ -226,6 +226,9 @@ class AudioConfig(BaseModel):
     wake_oww_model: str = "hey_veda"
     wake_oww_model_path: str = "data/models/openwakeword/hey_veda.onnx"
     wake_threshold: float = 0.5
+    # After Veda speaks, wake hits are ignored for this long (and the detector's audio window is wiped), so the
+    # "Hey Veda" that woke it, or its own "what's up", cannot wake it again in a loop. 0 turns the cooldown off.
+    wake_cooldown_sec: float = Field(default=1.0, ge=0.0, le=10.0)
     daemon_trigger: str = "auto"  # "auto" | "wake_word" | "hotkey"
     hotkey: str = "<f8>"
 
@@ -281,6 +284,18 @@ class AudioConfig(BaseModel):
     post_speak_settle_sec: float = 0.4
     # Drop transcripts that are mostly our own last reply (self-echo).
     echo_guard: bool = True
+
+    # Short phrases spoken while the model works ("Let me think."). One is picked at random, never the same twice in a
+    # row. The first plays after filler_first_delay_sec; if the wait goes on, one from filler_still_phrases plays every
+    # filler_repeat_sec, up to filler_max_count in all. filler_max_count: 0 turns them off.
+    filler_phrases: list[str] = [
+        "Let me think.", "One moment.", "Hmm, let me see.", "Thinking.", "Just a sec.",
+        "Checking.", "Looking into it.", "Give me a moment.", "Let me check.", "Okay, working on it.",
+    ]
+    filler_still_phrases: list[str] = ["Still on it.", "Almost there.", "Still working on it.", "Just a bit more."]
+    filler_first_delay_sec: float = Field(default=1.0, ge=0.0, le=30.0)
+    filler_repeat_sec: float = Field(default=7.0, ge=1.0, le=60.0)
+    filler_max_count: int = Field(default=3, ge=0, le=10)
 
     vad: VadConfig = VadConfig()
     speaker_id: SpeakerIdConfig = SpeakerIdConfig()

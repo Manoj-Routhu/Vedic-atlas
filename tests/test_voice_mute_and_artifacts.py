@@ -172,19 +172,19 @@ def test_slow_voice_turn_speaks_processing_acknowledgement(monkeypatch):
             self.spoken_texts.append(text)
             yield b"\x00\x00" * 10
 
-    monkeypatch.setattr("service.voice.voice_session._PROCESSING_ACK_DELAY_SEC", 0.01)
     tts = RecordingTTS()
     session = VoiceSession(
         audio=object(), collector=_Collector(), stt=_STT("what are my tasks"), tts=tts,
         speaker=_PlayingSpeaker(), supervisor=_Supervisor(work_sec=0.05),
         capture_gate=_Gate(), speak_replies=True,
+        filler_phrases=["Let me think."], filler_first_delay_sec=0.01,
     )
 
     asyncio.run(session._handle(_utterance()))
 
-    assert "Working on that." in tts.spoken_texts
+    assert "Let me think." in tts.spoken_texts
     assert "hello." in tts.spoken_texts
-    assert session._is_echo("Working on that")
+    assert session._is_echo("Let me think")
 
 
 def test_fast_voice_turn_skips_processing_acknowledgement(monkeypatch):
@@ -196,17 +196,17 @@ def test_fast_voice_turn_skips_processing_acknowledgement(monkeypatch):
             self.spoken_texts.append(text)
             yield b"\x00\x00" * 10
 
-    monkeypatch.setattr("service.voice.voice_session._PROCESSING_ACK_DELAY_SEC", 1.0)
     tts = RecordingTTS()
     session = VoiceSession(
         audio=object(), collector=_Collector(), stt=_STT("what are my tasks"), tts=tts,
         speaker=_PlayingSpeaker(), supervisor=_Supervisor(work_sec=0.001),
         capture_gate=_Gate(), speak_replies=True,
+        filler_phrases=["Let me think."], filler_first_delay_sec=1.0,
     )
 
     asyncio.run(session._handle(_utterance()))
 
-    assert "Working on that." not in tts.spoken_texts
+    assert "Let me think." not in tts.spoken_texts
     assert "hello." in tts.spoken_texts
 
 
