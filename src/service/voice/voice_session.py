@@ -79,6 +79,7 @@ class VoiceSession:
         wake_word: Any | None = None,
         wake_engine: str = "none",
         wake_window_sec: float = 8.0,
+        wake_cooldown_sec: float = 1.0,
         speaker_id: Any | None = None,
         require_known_speaker: bool = False,
         speaker_match_threshold: float = 0.6,
@@ -104,6 +105,8 @@ class VoiceSession:
         self._wake = wake_word
         self._wake_engine = wake_engine
         self._wake_window_sec = wake_window_sec
+        self._wake_cooldown_sec = wake_cooldown_sec
+        self._wake_ignore_until = 0.0
         self._wake_frame_bytes = (getattr(wake_word, "frame_length", 0) or 0) * 2
         self._wake_buffer = b""
         self._armed_until = 0.0
@@ -276,6 +279,9 @@ class VoiceSession:
         if self._wake is not None and not self._is_armed():
             self._record_wake_audio_level(frame.pcm)
             wake_detected = self._wake_triggered(frame)
+            if wake_detected and time.monotonic() < self._wake_ignore_until:
+                logger.info("[voice][flow] stage=wake_ignored reason=cooldown_after_speaking")
+                wake_detected = False
             self._log_wake_score(detected=wake_detected)
             if wake_detected:
                 self._wake_sequence += 1
@@ -990,8 +996,21 @@ class VoiceSession:
             drain()
         self._collector.reset()
         self._reset_speaker_scoring()
+        self._clear_wake_state()
         self._speaking = False
         self._emit("idle", {})
+
+    def _clear_wake_state(self) -> None:
+        """After we speak: wipe the detector's audio window and ignore wake hits for a short cooldown, so the phrase
+        that woke us (or the tail of our own voice) cannot wake us again."""
+        self._wake_buffer = b""
+        self._wake_ignore_until = time.monotonic() + self._wake_cooldown_sec
+        reset = getattr(self._wake, "reset", None)
+        if callable(reset):
+            try:
+                reset()
+            except Exception as e:
+                logger.warning(f"[voice] wake-word reset failed: {e}")
 
     def _emit(self, kind: str, payload: dict) -> None:
         try:
