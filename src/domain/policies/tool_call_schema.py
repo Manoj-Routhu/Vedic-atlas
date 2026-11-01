@@ -39,7 +39,7 @@ def tool_args_schema(manifest: ToolManifest) -> dict[str, Any]:
 
 CONTROL_KEYS = ("needs_live_data", "calls", "language", "advise", "also_chat", "clarification")
 # Optional keys: absent costs nothing. An always-present key measured ~2 s a turn, so these are never in `required`.
-OPTIONAL_KEYS = ("advise", "also_chat", "clarification")
+OPTIONAL_KEYS = ("language", "advise", "also_chat", "clarification")
 CLARIFICATION_MAX_CHARS = 200
 LANGUAGE_MAX_CHARS = 24
 
@@ -78,16 +78,16 @@ def build_control_schema(
         "advise": {"type": "boolean"},
         "also_chat": {"type": "boolean"},
         "clarification": {"type": "string", "maxLength": CLARIFICATION_MAX_CHARS},
-        # The language the user wrote in, named in English ("German", "Telugu",
-        # "Japanese") or "unknown". Required: it is the one signal that lets the
-        # reply be written in the user's language for languages this build does
-        # not hardcode. ~4 tokens a turn.
+        # The language the user wrote in, named in English ("Hindi") or "unknown".
+        # OPTIONAL and written only for a message that is not English: an English turn emits nothing for it, so the
+        # normal flow pays no extra output tokens (decode is ~0.4 s a token). The deterministic detector
+        # (language_policy.language_of) still names Hindi without the model.
         "language": {"type": "string", "maxLength": LANGUAGE_MAX_CHARS},
     }
     return {
         "type": "object",
         "properties": {k: props[k] for k in key_order},
-        # advise / also_chat / clarification stay optional (absent = not set; saves ~5 tokens a turn each)
+        # language / advise / also_chat / clarification stay optional (absent = not set; saves ~5 tokens a turn each)
         "required": [k for k in key_order if k not in OPTIONAL_KEYS],
         "additionalProperties": False,
     }

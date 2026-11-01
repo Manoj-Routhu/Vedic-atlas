@@ -46,7 +46,7 @@ _HELP = """
   /approve           list pending approvals (resolve interactively)
   /mute \u00b7 /unmute    close / open the microphone
   /listen            show mic state (muted / listening / turns)
-  /language [code]   show or set the STT language (auto | en | hi | te | de | ja)
+  /language [code]   show or set the STT language (auto | en | hi)
   /doctor            check the online tools (weather, search, currency)
   /trace [n]         show what the tools actually did on the last n turns
   /task              list tasks · /task add <title> · /task done <id>

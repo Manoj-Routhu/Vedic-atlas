@@ -222,6 +222,20 @@ function Setup-Models {
     $w = "https://huggingface.co/Systran/faster-whisper-base.en/resolve/main"
     foreach ($f in @("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")) { Fetch "$w/$f" (Join-Path $Root "data\models\whisper-base.en\$f") }
 
+    Info "speech-to-text, multilingual (faster-whisper small, for Hindi; 464 MB)"
+    $ws = "https://huggingface.co/Systran/faster-whisper-small/resolve/main"
+    foreach ($f in @("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")) { Fetch "$ws/$f" (Join-Path $Root "data\models\whisper-small\$f") }
+
+    # The same Piper voices as the Pi (config/audio.yaml tts_engine: piper). Windows speech has English voices only and says
+    # nothing for Hindi.
+    $pv = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
+    foreach ($v in @("en/en_US/lessac/medium/en_US-lessac-medium", "hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium")) {
+        $leaf = Split-Path $v -Leaf
+        Info "voice (Piper $leaf)"
+        Fetch "$pv/$v.onnx" (Join-Path $Root "data\models\piper\$leaf.onnx")
+        Fetch "$pv/$v.onnx.json" (Join-Path $Root "data\models\piper\$leaf.onnx.json")
+    }
+
     Info "memory (BGE-small sentence embeddings)"
     $e = "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main"
     Fetch "$e/onnx/model.onnx" (Join-Path $Root "data\bge-small-en-v1.5\model.onnx")
@@ -255,6 +269,11 @@ function Setup-Env {
     elseif (Test-Path (Join-Path $Root ".env.example")) {
         if ($DryRun) { Info "[dry-run] would create .env from .env.example" } else { Copy-Item (Join-Path $Root ".env.example") $envFile; Ok "created .env from .env.example" }
     } else { Warn "no .env.example found; create .env yourself if you need API keys" }
+    # VEDA_DEVICE=laptop loads config/hardware/laptop.yaml (8 generation threads: measured +37-43% on a Core Ultra 7, and the
+    # laptop paths for the camera model). Without it no per-machine settings apply.
+    if ((Test-Path $envFile) -and -not (Select-String -Path $envFile -Pattern "^VEDA_DEVICE=" -Quiet)) {
+        if ($DryRun) { Info "[dry-run] would add VEDA_DEVICE=laptop to .env" } else { Add-Content -Path $envFile -Value "`nVEDA_DEVICE=laptop"; Ok "added VEDA_DEVICE=laptop to .env" }
+    }
     Info "web search needs TAVILY_API_KEY in .env (weather and currency need no key)."
 }
 

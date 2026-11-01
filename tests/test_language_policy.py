@@ -12,10 +12,10 @@ TELUGU = "\u0c28\u0c2e\u0c38\u0c4d\u0c24\u0c47, \u0c2e\u0c40\u0c30\u0c41 \u0c0e\
     "text,expected",
     [
         (HINDI, "Hindi"),
-        (TELUGU, "Telugu"),
-        ("Ich mag Jazzmusik am Abend", "German"),
-        ("Was ist die Hauptstadt von Deutschland?", "German"),
-        ("Guten Tag, wie geht es dir", "German"),
+        (TELUGU, None),                                    # Telugu is not supported: handled as English
+        ("Ich mag Jazzmusik am Abend", None),             # German is not supported: handled as English
+        ("Was ist die Hauptstadt von Deutschland?", None),
+        ("Guten Tag, wie geht es dir", None),
         ("I like jazz in the evening", None),
         ("the weather is nice and I am happy", None),
         ("2+2", None),
@@ -30,10 +30,12 @@ def test_language_of_is_exact_for_scripts_and_conservative_for_latin(text, expec
 @pytest.mark.parametrize(
     "label,expected",
     [
-        ("German", "German"),
-        (" german ", "German"),
-        ('"Japanese"', "Japanese"),
-        ("Brazilian Portuguese", "Brazilian Portuguese"),
+        ("Hindi", "Hindi"),
+        (" telugu ", "English"),                           # a real language this device does not speak
+        ('"English"', "English"),
+        ("German", "English"),                  # a real language this device does not speak -> English
+        ('"Japanese"', "English"),
+        ("Brazilian Portuguese", "English"),
         ("unknown", None),
         ("UNKNOWN", None),
         ("none", None),

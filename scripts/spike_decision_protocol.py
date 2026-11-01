@@ -43,7 +43,7 @@ from domain.policies.dispatch_policy import Route, resolve  # noqa: E402
 from domain.policies.session_state_policy import active_line  # noqa: E402
 from domain.policies.tool_call_schema import CONTROL_KEYS, build_control_schema, tool_args_schema  # noqa: E402
 
-CALLS_FIRST = ("calls", "needs_live_data", "advise", "also_chat", "clarification")
+CALLS_FIRST = ("calls", "needs_live_data", "language", "advise", "also_chat", "clarification")   # a permutation of CONTROL_KEYS
 from service.prompting.prompt_composer import PromptComposer  # noqa: E402
 from tpa.filestore.file_prompt_store import FilePromptStore  # noqa: E402
 from tpa.filestore.yaml_tool_manifest_store import YamlToolManifestStore  # noqa: E402
@@ -250,7 +250,7 @@ class Runner:
             active = ""
             if state and variant != "A3":
                 active = active_line(SessionContext("s", "", state["tool"], state.get("slots", {}), NOW - timedelta(minutes=3),
-                                                    NOW + timedelta(minutes=12)), NOW)
+                                                    NOW + timedelta(minutes=12)), NOW, case["say"])   # same gate as the app
             order = CALLS_FIRST if variant == "A2" else CONTROL_KEYS
             schema = self.schema_calls_first if variant == "A2" else self.schema_flag_first
             p = self.composer.control_stage(case["say"], self._turns(history), active, key_order=order, show_empty=True)

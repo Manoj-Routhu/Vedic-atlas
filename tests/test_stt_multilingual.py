@@ -12,7 +12,7 @@ def test_auto_means_detect_for_a_multilingual_model():
 
 def test_a_language_code_is_kept():
     assert FasterWhisperProvider(model_size="small", language="hi")._language == "hi"
-    assert FasterWhisperProvider(model_size="small", language=" te ")._language == "te"
+    assert FasterWhisperProvider(model_size="small", language=" HI ")._language == "hi"
 
 
 def test_an_english_only_model_is_pinned_to_english_when_auto_is_requested():

@@ -131,7 +131,16 @@ def build_stt(cfg: AppConfig):
             "threads": cfg.audio.stt_threads,
             "timeout": cfg.audio.stt_timeout,
             "auto_min_sec": cfg.audio.stt_auto_min_sec,
+            "allowed_languages": tuple(cfg.audio.stt_languages or ["en"]),
         }
+        fast = cfg.audio.stt_english_model_path
+        if fast:
+            fast_resolved = (PROJECT_ROOT / fast) if not Path(fast).is_absolute() else Path(fast)
+            if fast_resolved.exists():
+                provider_options["english_model_size"] = str(fast_resolved)
+                logger.info(f"[voice] STT English fast path: {fast_resolved.name} (used while language=en)")
+            else:
+                logger.warning(f"[voice] STT English model not found at {fast_resolved}; the multilingual model handles English too")
         path = cfg.audio.stt_model_path
         if path:
             resolved = (PROJECT_ROOT / path) if not Path(path).is_absolute() else Path(path)

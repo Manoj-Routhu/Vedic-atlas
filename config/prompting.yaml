@@ -3,17 +3,19 @@
 # n_ctx is 4096 in the base config (the 4B model is both router and responder; the 0.6B/1.7B/router profiles are no longer supported) and the reply needs room too:
 # raise with care, then measure (scripts/measure_prompt_budget.py). A missing key falls back to the dataclass default.
 budgets:
-  control: 3550          # the ONE decision per turn: persona + every tool + rules/examples (static, cached ~2300) + ACTIVE/RECENT/USER
+  control: 3880          # the ONE decision per turn: persona + every tool + rules/examples (static, cached ~2300) + ACTIVE/RECENT/USER
   narrate: 500           # data plane: one capped tool result, no tools, no history
   chat: 1500             # plain conversation, no tools
   observation_max: 320   # hard cap on a tool result before it enters any prompt
   chat_history_turns: 8
 
 # Recent conversation shown to the control decode, in COMPLETE exchanges (user + reply), never lone turns.
-control_history_exchanges: 2
+history_for_follow_ups_only: true   # false = history is always shown to the control decision, exactly as before (the search-topic leak returns)
+control_history_exchanges: 2   # 1 exchange got 1 of 6 follow-ups right when the answer needed the earlier one; 2 got 6 of 6. Stand-alone messages get no history anyway
 
 # Characters a history turn / the user message is clipped to in a prompt.
 turn_chars: 200
+control_turn_chars: 200   # clipping history to 100/50 lost the name in a long reply (1 of 4 follow-ups right vs 2 of 4)
 user_message_chars: 500
 
 # Per-tool caps do NOT live here: a tool's `max_result_tokens` belongs in its manifest (config/tools/*.yaml).

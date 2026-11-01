@@ -78,5 +78,7 @@ def build_voice_session(cfg: AppConfig, *, audio, capture_gate, supervisor, even
         speaker_id=speaker_id,
         require_known_speaker=cfg.audio.speaker_id.require_known_speaker,
         speaker_match_threshold=cfg.audio.speaker_id.match_threshold,
+        unclear_below=cfg.audio.stt_unclear_below,
+        shaky_below=cfg.audio.stt_shaky_below,
         on_event=_publish,
     )

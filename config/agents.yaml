@@ -2,7 +2,7 @@
 # call are the manifests in config/tools/*.yaml. There is no routing step and no per-owner specialist agent.
 
 # Session working state (last successful tool + its slots) is ignored once older than this many seconds.
-session_ttl_sec: 900
+session_ttl_sec: 300     # was 900: replies take tens of seconds here, so 5 minutes still spans a follow-up
 
 # (How much history the control decode sees, and every prompt budget, live in config/prompting.yaml.)
 

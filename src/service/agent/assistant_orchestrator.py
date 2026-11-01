@@ -32,7 +32,7 @@ from domain.policies.dispatch_policy import Resolution, Route, resolve
 from domain.policies.grounding_policy import is_grounded, states_a_measurement
 from domain.policies.echo_policy import is_echo
 from domain.policies.grounding_policy import is_grounded
-from domain.policies.language_policy import language_of, looks_like_text, normalise_language
+from domain.policies.language_policy import looks_like_text, resolve_language, shorten_for_translation
 from domain.policies.reply_policy import (
     ADVISE_MODE, FAILED, NARRATE, SPOKEN, UNCONFIRMED_REPLY, classify_call, failure_text, resolve_reply_mode, spoken_text,
 )
@@ -155,11 +155,18 @@ class AssistantOrchestrator(BaseAgent):
             except Exception as e:
                 logger.warning(f"[assistant] session id unavailable: {e}")
 
+    def _active_for(self, ctx: AgentContext, state: SessionContext | None) -> str:
+        """The `ACTIVE:` line for this turn. Empty when Whisper was unsure what was said: a garbled message "continues"
+        whatever was asked last (measured: it flipped Hindi transcripts to the room sensor)."""
+        if ctx.metadata.get("stt_shaky"):
+            return ""
+        return self._session_state.render_active(state, ctx.user_message) if (self._session_state and state) else ""
+
     async def _decide(self, ctx: AgentContext) -> tuple[DecodeResult, Resolution, SessionContext | None, str, TurnOutcome]:
         state = None
         if self._session_state is not None and ctx.session_id is not None:
             state = self._session_state.get(ctx.session_id, ctx.speaker_id)
-        active = self._session_state.render_active(state) if (self._session_state and state) else ""
+        active = self._active_for(ctx, state)
         history = self._conversation.turns if self._conversation is not None else []
         logger.info(f"[turn] user={log_text(ctx.user_message)} voice={ctx.from_voice}")
         result = await self._decoder.decide(ctx.user_message, history, active)
@@ -197,8 +204,8 @@ class AssistantOrchestrator(BaseAgent):
         if not result.decision.valid:
             outcome.notes.append(f"control decision invalid: {result.decision.note}")
         # The model's own label for the turn, with the deterministic detector overriding it for the scripts it
-        # reads exactly (so Telugu/Hindi/German can never be mislabelled).
-        language = language_of(ctx.user_message) or normalise_language(result.decision.language)
+        # reads exactly (so Hindi can never be mislabelled).
+        language = resolve_language(ctx.user_message, result.decision.language)
         if self._multilingual:
             if language:
                 ctx.metadata["language"] = language
@@ -399,14 +406,17 @@ class AssistantOrchestrator(BaseAgent):
 
         The prompt carries the sentence only (never the user's question). A reply that repeats the user's
         message, or whose numbers are not in the sentence, is rejected: the English sentence is kept."""
+        text = shorten_for_translation(text)
         stage = self._composer.translate_stage(text, language)
         outcome.prompt_tokens["translate"] = stage.tokens
-        for attempt in range(2):
+        # One attempt: a retry is a whole extra decode (several seconds on a Pi) for a sentence the English fallback
+        # already answers correctly, and this runs only on non-English turns.
+        for attempt in range(1):
             try:
                 translated = (await self._client.complete(
                     prompt=stage.prompt, system=stage.system, model=self.model,
                     temperature=self._narrate_temperature if attempt == 0 else 0.6,
-                    num_predict=max(self._narrate_num_predict, 120),
+                    num_predict=max(self._narrate_num_predict, 300),   # Hindi needs ~100-150 tokens for 86 English characters
                 )).strip()
             except Exception as e:
                 logger.warning(f"[language] template translation failed: {e}")

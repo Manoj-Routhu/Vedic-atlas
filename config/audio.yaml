@@ -7,30 +7,39 @@ wake_window_sec: 10.0        # time to start one command; say "Hey Veda" again f
 daemon_trigger: auto
 hotkey: <f8>
 
-# Multilingual Whisper small (staged in data/models/whisper-small). "auto" detects the spoken language.
+# Speech-to-text. The DEFAULT is the fast English path: stt_language "en" uses the English-only model below, exactly
+# as before the multilingual feature (Whisper small is ~2.5x slower, and "auto" adds language detection on top).
+# To speak Hindi switch at runtime: `/language auto` (detect English or Hindi per utterance) or `/language hi`;
+# `/language en` returns to the fast path. The multilingual model (stt_model_path) is loaded only on the first such
+# switch. A single pin (e.g. "hi") forces every utterance to that language and breaks the others.
+# Only English and Hindi are supported: auto-detection picks among stt_languages, never among Whisper's ~99.
 stt_model: small
 stt_model_path: data/models/whisper-small
-# "auto" = detect the language; short clips reuse the last confidently detected one (sticky). Switch at
-# runtime with `/language en|hi|te|de|ja|auto`. A single pin (e.g. "hi") forces every utterance to that
-# language and breaks the others.
+stt_english_model_path: data/models/whisper-base.en
 stt_backend: faster_whisper
-stt_language: auto
-stt_auto_min_sec: 2.5
+stt_language: en
+stt_languages: [en, hi]
+# Whisper's average log-probability of what it heard: about -0.4 for clear speech, -0.8 to -1.2 when it is guessing.
+# Below stt_unclear_below Veda says "I didn't catch that" (no 40+ s tool decision on a guess); below stt_shaky_below it
+# answers but does not inherit the previous tool. If clear speech is being refused, lower both (more negative).
+stt_unclear_below: -1.0
+stt_shaky_below: -0.7
+# 0 = always detect (among stt_languages). With only two candidates detection is reliable even on short clips, while the
+# old "reuse the last language for short clips" rule forced English audio to be decoded in the wrong language (24 s of garbage).
+stt_auto_min_sec: 0
 stt_threads: null
 stt_timeout: 120.0
 noise_suppression_enabled: true
 noise_suppression_strength: 0.75  # 0 = off, 1 = strongest; targets steady fan/hum noise
 
-# Piper covers en/de/hi/te/ja. Kannada has no Piper voice: it falls back to the default (English) voice.
-tts_engine: auto
+# Piper on every machine (laptop and Pi): the same voices, so what is tested here is what runs on the Pi. "auto" would
+# pick Windows speech (pyttsx3) on a Windows laptop, which has English voices only and says nothing for Hindi.
+tts_engine: piper
 tts_voice: zira                       # pyttsx3 fallback hint only
 tts_model_path: data/models/piper/en_US-lessac-medium.onnx
 tts_voice_map:
   en: data/models/piper/en_US-lessac-medium.onnx
-  de: data/models/piper/de_DE-thorsten-medium.onnx
   hi: data/models/piper/hi_IN-priyamvada-medium.onnx
-  te: data/models/piper/te_IN-padmavathi-medium.onnx
-  ja: data/models/piper/ja_JP-hi_fi_captain-medium.onnx
 
 mic_device_index: 1         # set explicitly after running sounddevice.query_devices()
 speaker_device_index: null
@@ -51,6 +60,6 @@ vad:
   noise_adapt: 0.05
   aggressiveness: 2
   start_frames: 3
-  silence_ms: 700           # Hindi sentence pauses were being cut at 400 ms
+  silence_ms: 400           # end-of-speech wait: every utterance pays it. Hindi speakers who pause between phrases may need 700
   max_utterance_sec: 10.0   # shorter utterance cap
   pre_roll_frames: 5

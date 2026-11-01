@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import re
 
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# Same sentence ends as claim_guard_policy: danda (Hindi) after whitespace, full-width Japanese marks with none.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?\u0964\u0965])\s+|(?<=[\u3002\uff01\uff1f])")
 _HAS_WORD_RE = re.compile(r"\w")
 
 # "Let me know if you need anything else", "Feel free to ask", "Is there anything else...", "I'm here to help".

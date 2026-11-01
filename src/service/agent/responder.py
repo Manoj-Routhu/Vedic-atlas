@@ -25,7 +25,7 @@ from domain.ports.knowledge_store_port import KnowledgeStorePort
 from domain.ports.memory_repository_port import MemoryRepositoryPort
 from core.logging_config import logger, log_text
 from domain.policies.claim_guard_policy import SentenceClaimGuard
-from domain.policies.echo_policy import fallback_reply, is_echo
+from domain.policies.echo_policy import EchoHold, fallback_reply
 from domain.policies.language_policy import language_of
 from domain.policies.reply_filler_policy import FillerStreamFilter, strip_filler
 from domain.policies.reply_policy import UNCONFIRMED_REPLY
@@ -136,18 +136,24 @@ class ResponderAgent(LLMAgent):
         # scripts it knows exactly. Naming it beats "reply in the user's language": a small model follows a
         # concrete instruction, and the abstract rule is easy to ignore in a long English persona.
         language = ctx.metadata.get("language") or language_of(ctx.user_message)
-        if language:
+        non_english = bool(language) and language.strip().lower() != "english"
+        if non_english:
             tail.append(f"The user wrote in {language}. Write your entire reply in {language}.")
         if ctx.metadata.get("no_echo"):
             tail.append(
                 "Your previous attempt repeated the user's message. Answer it now in your own words; "
                 "do not repeat or restate it."
             )
-        tail.append(
-            "Respond directly to the user in the same language as USER's message "
-            "(English only if USER wrote English). Answer it; never repeat or restate the user's message. "
-            "Be concise and conversational."
-        )
+        if non_english or ctx.metadata.get("no_echo"):
+            tail.append(
+                "Respond directly to the user in the same language as USER's message. "
+                "Answer it; never repeat or restate the user's message. Be concise and conversational."
+            )
+        else:
+            # English: exactly what main sent. This line is re-read on every chat turn (it follows the cached prefix),
+            # and prompt tokens cost ~0.3 s each on the target CPU, so an English turn must not carry the language
+            # instructions.
+            tail.append("Respond directly to the user. Be concise and conversational.")
         fits = None
         if self._chat_budget is not None:
             system_tokens = estimate_tokens(self.system_prompt)
@@ -231,21 +237,20 @@ class ResponderAgent(LLMAgent):
             stream = super().execute_stream(ctx, cancel_event=inner_cancel)
             base_finished = False   # the base stream ran to its end, so it already saved the turn itself
             echoed = False
-            first_sentence = True
+            echo_hold = EchoHold(ctx.user_message)
             try:
                 async for chunk in stream:
                     text = filler_filter.feed(chunk)
                     for sentence in guard.feed(text) if text else []:
-                        if first_sentence:
-                            first_sentence = False
-                            if is_echo(sentence, ctx.user_message):
-                                # The model handed the user's own message back. Nothing has been released yet,
-                                # so stop it here and answer again instead of showing the echo.
-                                echoed = True
-                                inner_cancel.set()
-                                break
-                        spoken.append(sentence)
-                        yield sentence
+                        released, echoed = echo_hold.feed(sentence)
+                        if echoed:
+                            # The model handed the user's own message back. Nothing has been released yet,
+                            # so stop it here and answer again instead of showing the echo.
+                            inner_cancel.set()
+                            break
+                        for out in released:
+                            spoken.append(out)
+                            yield out
                     if echoed or guard.tripped:
                         inner_cancel.set()
                         break
@@ -253,20 +258,21 @@ class ResponderAgent(LLMAgent):
                     base_finished = True
                 if not echoed and not guard.tripped and not (cancel_event is not None and cancel_event.is_set()):
                     for sentence in guard.feed(filler_filter.finish()) + guard.finish():
-                        if first_sentence:
-                            first_sentence = False
-                            if is_echo(sentence, ctx.user_message):
-                                echoed = True
-                                break
-                        spoken.append(sentence)
-                        yield sentence
+                        released, echoed = echo_hold.feed(sentence)
+                        if echoed:
+                            break
+                        for out in released:
+                            spoken.append(out)
+                            yield out
+                    if not echoed and echo_hold.pending:
+                        echoed = True   # the reply ended on the sentence that merely resembled the message
             finally:
                 relay.cancel()
                 await stream.aclose()
 
             if guard.tripped:
                 logger.warning("[tool-guard] streamed chat reply claimed an action with no tool call; stopped")
-                if not guard.released:
+                if not spoken:   # nothing reached the user (a held sentence counts as not yet released)
                     yield UNCONFIRMED_REPLY
                 if not base_finished:
                     # The base stream was cut short, so it never saved the turn: save what the user was actually given.

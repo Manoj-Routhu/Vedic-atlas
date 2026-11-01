@@ -270,7 +270,9 @@ def build_app_state(app: FastAPI) -> None:
     count_tokens = getattr(inference_backend, "count_tokens", None) or estimate_tokens
     composer = PromptComposer(
         FilePromptStore(), list(tool_manifests.values()), budgets=PromptBudgets(**cfg.prompting.budgets), count_tokens=count_tokens,
-        turn_chars=cfg.prompting.turn_chars, user_message_chars=cfg.prompting.user_message_chars,
+        turn_chars=cfg.prompting.turn_chars, control_turn_chars=cfg.prompting.control_turn_chars,
+        history_for_follow_ups_only=cfg.prompting.history_for_follow_ups_only,
+        user_message_chars=cfg.prompting.user_message_chars,
     )
     responder = ResponderAgent(
         client=inference_client, conversation=conversation, knowledge=knowledge,

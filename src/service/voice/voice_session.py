@@ -37,14 +37,18 @@ from typing import Any, Callable
 from core.logging_config import logger, log_text, reset_voice_turn_id, set_voice_turn_id
 from domain.entities.agent_context import AgentContext
 from domain.entities.utterance import Utterance
-from domain.policies.transcript_policy import artifact_reason
+from domain.policies.language_policy import voice_language
+from domain.policies.transcript_policy import SHAKY_BELOW, UNCLEAR_BELOW, artifact_reason, speech_quality, unclear_reply
 from domain.ports.audio_capture_port import AudioCapturePort
 from domain.ports.stt_port import STTPort
 from domain.ports.tts_port import TTSPort
 from service.voice.utterance_collector import UtteranceCollector
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
-_SENTENCE_END_RE = re.compile(r"[.!?]+(?=\s)")
+# Sentence ends: Latin . ! ?  + Devanagari danda/double danda (U+0964/5), which Hindi uses instead of a full stop, and the
+# full-width Japanese/Chinese marks, which are NOT followed by a space. Without them a Hindi/Japanese reply is never split
+# and nothing is spoken until the whole reply is generated.
+_SENTENCE_END_RE = re.compile(r"(?:[.!?]+(?=\s))|(?:[।॥。！？]+)")
 _WAKE_ACKNOWLEDGEMENT = "Hey there, what's up?"
 _PROCESSING_ACKNOWLEDGEMENT = "Working on that."
 _PROCESSING_ACK_DELAY_SEC = 1.0
@@ -82,6 +86,8 @@ class VoiceSession:
         speaker_id: Any | None = None,
         require_known_speaker: bool = False,
         speaker_match_threshold: float = 0.6,
+        unclear_below: float = UNCLEAR_BELOW,
+        shaky_below: float = SHAKY_BELOW,
         on_event: Callable[[dict], None] | None = None,
     ):
         self._audio = audio
@@ -92,6 +98,8 @@ class VoiceSession:
         self._supervisor = supervisor
         self._gate = capture_gate
         self._min_chars = min_chars
+        self._unclear_below = unclear_below
+        self._shaky_below = shaky_below
         self._speak_replies = speak_replies
         self._speak_timeout_sec = speak_timeout_sec
         self._post_speak_settle_sec = post_speak_settle_sec
@@ -174,17 +182,21 @@ class VoiceSession:
 
     async def _warm_output(self) -> None:
         """Load the TTS voice and open the speaker stream now, not on the first reply. Both optional on the adapter."""
+        # Separate try blocks: a voice that fails to warm must not also skip opening the speaker stream.
         try:
             warm = getattr(self._tts, "warmup", None)
             if callable(warm):
                 started = time.perf_counter()
                 await asyncio.to_thread(warm)
                 logger.info(f"[voice] TTS voice loaded in {(time.perf_counter() - started) * 1000:.0f} ms")
+        except Exception as e:
+            logger.warning(f"[voice] TTS warmup skipped: {e}")
+        try:
             keep_open = getattr(self._speaker, "keep_open", None)
             if callable(keep_open):
                 await asyncio.to_thread(keep_open, self._tts.sample_rate)
         except Exception as e:
-            logger.warning(f"[voice] output warmup skipped: {e}")
+            logger.warning(f"[voice] speaker pre-open skipped: {e}")
 
     async def stop(self) -> None:
         self._stop.set()
@@ -737,6 +749,20 @@ class VoiceSession:
             self._emit("artifact_ignored", {"reason": reason})
             return
 
+        # Whisper is guessing (a mumble, foreign audio, noise): asking again costs a few seconds, acting on the guess costs a
+        # 40+ s tool decision and often a wrong answer. No model call, no tool.
+        quality = speech_quality(transcript.avg_logprob, self._unclear_below, self._shaky_below)
+        if quality == "unclear":
+            reply = unclear_reply(transcript.language)
+            logger.info(
+                f"[voice] unclear speech (avg_logprob={transcript.avg_logprob:.2f} < {self._unclear_below}): "
+                f"asking to repeat; heard {log_text(text, 60)}"
+            )
+            self._emit("unclear", {"avg_logprob": round(transcript.avg_logprob, 2), "heard": text})
+            self._last_reply = reply            # so the echo guard does not mistake our own question for the user
+            await self._speak(reply, language=voice_language(reply, "Hindi" if (transcript.language or "").startswith("hi") else None))
+            return
+
         # Resolve who (if anyone enrolled) said this, then clear the running
         # scores so the next utterance starts clean. Reading before
         # resetting is safe - no other frames are fed while _handle runs,
@@ -762,6 +788,10 @@ class VoiceSession:
         self._emit("transcript", {"text": text})
 
         ctx = AgentContext(user_message=text, from_voice=True)
+        if transcript.avg_logprob is not None:
+            ctx.metadata["stt_avg_logprob"] = round(transcript.avg_logprob, 2)
+        if quality == "shaky":
+            ctx.metadata["stt_shaky"] = True      # the decider will not inherit the previous tool for this turn
         if speaker_name:
             ctx.metadata["speaker_name"] = speaker_name
         if self._speak_replies and self._tts is not None:
@@ -875,13 +905,13 @@ class VoiceSession:
                 sentence, buffer = self._pop_sentence(buffer)
                 while sentence:
                     reply_audio_started.set()
-                    spoke, _ = await self._say_pcm(sentence, timing, language=ctx.metadata.get("language"))
+                    spoke, _ = await self._say_pcm(sentence, timing, language=voice_language(sentence, ctx.metadata.get("language")))
                     spoke_anything = spoke or spoke_anything
                     sentence, buffer = self._pop_sentence(buffer)
             tail = buffer.strip()
             if tail:
                 reply_audio_started.set()
-                spoke, _ = await self._say_pcm(tail, timing, language=ctx.metadata.get("language"))
+                spoke, _ = await self._say_pcm(tail, timing, language=voice_language(tail, ctx.metadata.get("language")))
                 spoke_anything = spoke or spoke_anything
             stream_finished_ms = (time.perf_counter() - stream_started) * 1000
             if spoke_anything:

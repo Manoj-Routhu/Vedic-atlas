@@ -11,9 +11,7 @@ def test_language_names_and_codes_normalise():
     assert language_key("Hindi") == "hi"
     assert language_key("hi") == "hi"
     assert language_key("Telugu") == "te"
-    assert language_key("German") == "de"
-    assert language_key("Japanese") == "ja"
-    assert language_key("Kannada") == "kn"
+    assert language_key("English") == "en"
     assert language_key("English") == "en"
     assert language_key(None) == "en"
 

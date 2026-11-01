@@ -101,6 +101,11 @@ class InferenceConfig(BaseModel):
     # llama_cpp only: RAM (MB) for a cache of evaluated prompt prefixes, shared across chat / routing / tool-call
     # prompts. 0 = off. Each cached prefix of ~500 tokens costs roughly 70 MB.
     prompt_cache_mb: int = 0
+    # llama_cpp only. Off by default: measure on the target machine first (scripts/bench_llm.py --compare-kv).
+    # kv_cache_type "q8_0" halves the KV memory of the context and of every cached prompt (it needs flash attention, which it
+    # switches on); flash_attn alone fuses the attention step, which is where generation slows as the prompt grows.
+    flash_attn: bool = False
+    kv_cache_type: str = "f16"
     # llama_cpp only: memory-map the GGUF file. On CPUs where llama.cpp repacks the weights (ARM NEON/dotprod, AVX2)
     # the repacked copy lives in anonymous memory while the mapped file stays resident too, so the model is held twice
     # (measured on the Pi 5 with Qwen3-4B Q4_K_M: 5.5 GB RSS with mmap, 3.4 GB without, same speed).
@@ -227,20 +232,32 @@ class AudioConfig(BaseModel):
     # Local STT model directory (faster-whisper format). No auto-download.
     stt_model: str = "base.en"
     stt_model_path: str | None = None
+    # English-only model used while stt_language is "en" (~2.5x faster than the multilingual one). The multilingual
+    # model (stt_model_path) loads only when the language is switched to auto or another language. None = always
+    # use stt_model_path.
+    stt_english_model_path: str | None = None
     # "faster_whisper" (in-process, laptop) | "whisper_cpp" (Pi; adapter lands in a later phase).
     stt_backend: str = "faster_whisper"
-    # "auto" lets a multilingual model detect the language; a code pins it ("en", "hi", "te", "de", "ja", "kn").
+    # "auto" lets a multilingual model detect the language; a code pins it. Only the languages in `stt_languages`.
     # An English-only (.en) model must stay pinned to "en".
     stt_language: str = "auto"
+    # The languages this device speaks. Auto-detection chooses among these only; a clip that sounds like anything
+    # else is treated as the most likely of them (English if nothing else fits).
+    stt_languages: list[str] = Field(default_factory=lambda: ["en", "hi"])
     # Short utterances misdetect. Below this duration the sticky hint (last successful language) is trusted.
     stt_auto_min_sec: float = 2.5
+    # Whisper's average log-probability of what it heard (about -0.4 for clear speech). Below stt_unclear_below the device
+    # says "I didn't catch that" instead of acting on a guess; below stt_shaky_below it still answers, but does not
+    # inherit the previous tool. Lower both (more negative) if clear speech is being refused.
+    stt_unclear_below: float = -1.0
+    stt_shaky_below: float = -0.7
     stt_threads: int | None = None   # faster-whisper cpu_threads; None = library default
     stt_timeout: float = 120.0       # hard cap for one transcription, seconds
     # Per-utterance spectral gate before Whisper. Best for steady room noise.
     noise_suppression_enabled: bool = True
     noise_suppression_strength: float = Field(default=0.75, ge=0.0, le=1.0)
 
-    tts_engine: str = "auto"  # "auto" (pyttsx3 on Windows, Piper elsewhere) | "pyttsx3" | "piper"
+    tts_engine: str = "auto"  # "auto" (pyttsx3 on Windows, Piper elsewhere) | "pyttsx3" | "piper". pyttsx3 has English voices only.
     tts_voice: str = "zira"
     tts_model_path: str | None = None  # required when tts_engine == "piper"; the default voice
     # language (code or English name) -> Piper voice .onnx path. A missing language speaks with the default voice.
@@ -431,7 +448,7 @@ class AgentsConfig(BaseModel):
     tasks: AgentEntry = AgentEntry(description="The user's to-do list: add, list, complete, delete tasks")
     lookup: AgentEntry = AgentEntry(description="Live data from the web: weather, currency rates, news, current facts")
     memory: AgentEntry = AgentEntry(description="Saves lasting facts the user states about themselves: favourites, allergies, names, routines")
-    session_ttl_sec: int = 900  # session working state older than this is ignored (docs/10)
+    session_ttl_sec: int = 300  # session working state older than this is ignored (docs/10)
 
 
 class SkillEntry(BaseModel):
@@ -471,6 +488,12 @@ class PromptingConfig(BaseModel):
     budgets: dict[str, int] = {}
     control_history_exchanges: int = Field(default=2, ge=0, le=6)
     turn_chars: int = Field(default=200, ge=40)
+    # True: the last exchanges are shown to the control decision only for a message that points back at them (a pronoun, "and / what
+    # about", or very short). That stopped "tell me a joke" from searching "cricket news" after a cricket search. False: always shown,
+    # exactly as before.
+    history_for_follow_ups_only: bool = True
+    # Clip for a history turn in the control prompt only (chat keeps turn_chars).
+    control_turn_chars: int = Field(default=200, ge=40)
     user_message_chars: int = Field(default=500, ge=40)
 
     @field_validator("budgets")

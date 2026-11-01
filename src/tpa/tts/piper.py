@@ -18,8 +18,7 @@ from core.logging_config import logger
 
 # The reply language reaches us as an English name from the control decode ("Hindi") or a code from config.
 _LANGUAGE_ALIASES = {
-    "english": "en", "german": "de", "deutsch": "de", "hindi": "hi", "telugu": "te",
-    "japanese": "ja", "kannada": "kn",
+    "english": "en", "hindi": "hi",
 }
 
 
@@ -74,7 +73,8 @@ class PiperProvider:
 
     def warmup(self) -> None:
         """Load the voice and run it once, so the first reply does not wait for it (6 s on the Pi, measured)."""
-        for _ in self._ensure().synthesize("Ready."):
+        # The DEFAULT voice only: other languages load on their first reply, so the normal flow pays for one voice.
+        for _ in self._ensure(self._default_path).synthesize("Ready."):
             pass
 
     async def synthesize(self, text: str, voice: str | None = None) -> AsyncIterator[bytes]:

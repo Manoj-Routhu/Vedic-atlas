@@ -65,8 +65,16 @@ WHISPER_BASE_URL="https://huggingface.co/Systran/faster-whisper-base.en/resolve/
 WHISPER_DIR="$ROOT/data/models/whisper-base.en"
 WHISPER_FILES=(config.json model.bin tokenizer.json vocabulary.txt)
 
+# Multilingual speech-to-text (English, Hindi). base.en stays the default for English; this model is loaded
+# only after `/language auto|hi`. 464 MB.
+WHISPER_SMALL_URL="https://huggingface.co/Systran/faster-whisper-small/resolve/main"
+WHISPER_SMALL_DIR="$ROOT/data/models/whisper-small"
+
 PIPER_BASE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main"
 PIPER_VOICE="${PIPER_VOICE:-en_US-lessac-medium}"
+# Voices for the other supported languages (space separated; set PIPER_EXTRA_VOICES="" to skip). Without it a Hindi
+# reply is read with the English voice, which cannot pronounce it.
+PIPER_EXTRA_VOICES="${PIPER_EXTRA_VOICES-hi_IN-priyamvada-medium}"
 PIPER_DIR="$ROOT/data/models/piper"
 
 VISION_BASE_URL="https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main"
@@ -270,6 +278,39 @@ install_system_packages() {
 
 # ---------------------------------------------------------------- 3. venv + pip install
 
+# The language model is only as fast as the build of llama.cpp: a generic build (no NEON / dot-product kernels on a Pi, no AVX2 on
+# x86) is 3-6x slower (measured: the generic Windows wheel read prompts at 6-13 tok/s, the AVX2 build at 44-113). PyPI has no
+# prebuilt Pi wheel, so pip compiles it here; llama.cpp optimises for the machine it is built on UNLESS SOURCE_DATE_EPOCH is set
+# or it thinks it is cross-compiling, so GGML_NATIVE=ON is requested explicitly, and the result is checked and printed.
+verify_llama_build() {
+  local info
+  info="$("$VENV/bin/python" -c 'import llama_cpp; print(llama_cpp.llama_print_system_info().decode().strip())' 2>/dev/null)" \
+    || { warn "could not read the llama.cpp build flags (is llama-cpp-python installed?)"; return 0; }
+  info "llama.cpp build: $info"
+  case "$(uname -m)" in
+    aarch64|arm64)
+      if [[ "$info" == *"NEON = 1"* ]]; then
+        ok "llama.cpp was built for this CPU (NEON)"
+      else
+        warn "llama.cpp reports no NEON: this is a generic, much slower build. Rebuild: CMAKE_ARGS='-DGGML_NATIVE=ON' $VENV/bin/pip install --force-reinstall --no-binary llama-cpp-python --no-cache-dir 'llama-cpp-python>=0.3.0,<0.4'"
+      fi
+      # The model file is Q4_K_M. llama.cpp repacks its Q4_K weights into a fast layout when the model loads, but on ARM only if the build
+      # has dot-product (Pi 5) or int8-matmul instructions; without them it silently falls back to the slow generic kernels (the same
+      # trap that made the x86 laptop 3-6x slower: there the fast path needed AVX2).
+      if [[ "$info" == *"DOTPROD = 1"* || "$info" == *"MATMUL_INT8 = 1"* ]]; then
+        ok "dot-product kernels present: the model's Q4_K weights get llama.cpp's fast ARM path"
+      else
+        warn "no DOTPROD / MATMUL_INT8 in the llama.cpp build: the model runs on the slow generic kernels. A Pi 5 has dot-product, so this build is not using the CPU: rebuild with CMAKE_ARGS='-DGGML_NATIVE=ON' (see above)."
+      fi
+      ;;
+    x86_64|amd64)
+      [[ "$info" == *"AVX2 = 1"* && "$info" == *"FMA = 1"* ]] && ok "llama.cpp was built with AVX2 and FMA" \
+        || warn "llama.cpp lacks AVX2/FMA: a generic, 3-6x slower build. Rebuild with CMAKE_ARGS='-DGGML_NATIVE=ON'."
+      ;;
+  esac
+  info "to measure this machine and check the prompt cache: $VENV/bin/python scripts/bench_llm.py --quick   (stop the Veda server first)"
+}
+
 setup_venv_and_install() {
   step "Python environment ($VENV)"
   local py
@@ -288,8 +329,10 @@ setup_venv_and_install() {
   local spec="."
   [[ -n "$EXTRAS" ]] && spec=".[${EXTRAS}]"
   export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(build_jobs)}"
+  export CMAKE_ARGS="-DGGML_NATIVE=ON ${CMAKE_ARGS:-}"   # optimise llama.cpp for THIS CPU (see verify_llama_build)
   info "build parallelism: $CMAKE_BUILD_PARALLEL_LEVEL job(s)"
   ( cd "$ROOT" && run "$VENV/bin/pip" install --prefer-binary -e "$spec" )
+  if (( ! DRY_RUN )); then verify_llama_build; fi
 
   # openwakeword declares tflite-runtime on Linux, which has no wheels for Python 3.12+ ("No matching
   # distribution found for tflite-runtime"). Veda only runs the ONNX model, which never imports tflite,
@@ -390,6 +433,11 @@ download_models() {
     fetch "$WHISPER_BASE_URL/$f" "$WHISPER_DIR/$f"
   done
 
+  info "speech-to-text, multilingual (faster-whisper small, for Hindi)"
+  for f in "${WHISPER_FILES[@]}"; do
+    fetch "$WHISPER_SMALL_URL/$f" "$WHISPER_SMALL_DIR/$f"
+  done
+
   info "memory (BGE-small sentence embeddings)"
   fetch "$EMBED_BASE_URL/onnx/model.onnx" "$EMBED_DIR/model.onnx"
   fetch "$EMBED_BASE_URL/tokenizer.json" "$EMBED_DIR/tokenizer.json"
@@ -399,6 +447,14 @@ download_models() {
   url="$(piper_url "$PIPER_VOICE")"
   fetch "$url" "$PIPER_DIR/$PIPER_VOICE.onnx"
   fetch "$url.json" "$PIPER_DIR/$PIPER_VOICE.onnx.json"
+
+  local extra
+  for extra in $PIPER_EXTRA_VOICES; do
+    info "voice (Piper $extra)"
+    url="$(piper_url "$extra")"
+    fetch "$url" "$PIPER_DIR/$extra.onnx"
+    fetch "$url.json" "$PIPER_DIR/$extra.onnx.json"
+  done
 
   download_wake_feature_models
 }
