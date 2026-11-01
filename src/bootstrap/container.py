@@ -270,7 +270,9 @@ def build_app_state(app: FastAPI) -> None:
     count_tokens = getattr(inference_backend, "count_tokens", None) or estimate_tokens
     composer = PromptComposer(
         FilePromptStore(), list(tool_manifests.values()), budgets=PromptBudgets(**cfg.prompting.budgets), count_tokens=count_tokens,
-        turn_chars=cfg.prompting.turn_chars, user_message_chars=cfg.prompting.user_message_chars,
+        turn_chars=cfg.prompting.turn_chars, control_turn_chars=cfg.prompting.control_turn_chars,
+        history_for_follow_ups_only=cfg.prompting.history_for_follow_ups_only,
+        user_message_chars=cfg.prompting.user_message_chars,
     )
     responder = ResponderAgent(
         client=inference_client, conversation=conversation, knowledge=knowledge,
@@ -296,6 +298,10 @@ def build_app_state(app: FastAPI) -> None:
         adaptive_reply=cfg.app.adaptive_reply, mixed_intent=cfg.app.mixed_intent,
         parallel_tool_calls=cfg.app.parallel_tool_calls,
         room_context=(lambda: room_line(room_state.get(), datetime.now(), room_cfg.max_age_sec)) if room_driver is not None else None,
+        multilingual=cfg.app.multilingual.enabled,
+        reject_unknown_language=cfg.app.multilingual.reject_unknown,
+        unknown_language_reply=cfg.app.multilingual.unknown_reply,
+        min_language_letters=cfg.app.multilingual.min_letters,
     )
     app.state.orchestrator = orchestrator
     supervisor = SupervisorAgent(model=cfg.agents.supervisor.model, orchestrator=orchestrator)

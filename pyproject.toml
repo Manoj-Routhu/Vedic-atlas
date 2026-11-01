@@ -47,6 +47,7 @@ dependencies = [
     # --- local language model (config/inference.yaml: backend=llama_cpp) ---
     "llama-cpp-python>=0.3.0",  # needs a C/C++ toolchain + cmake where no wheel exists
 
+    "unidecode>=1.3",         # transliterate place/query arguments (format: latin)
     # --- voice pipeline (config/audio.yaml) ---
     "sounddevice>=0.4.6",       # microphone + speaker; needs PortAudio (apt: libportaudio2)
     "faster-whisper>=1.0.0",    # speech-to-text (model staged at data/models/whisper-base.en)
@@ -71,6 +72,10 @@ dependencies = [
     # --- music (config/music.yaml): yt-dlp finds the song. The player, mpv, is a SYSTEM program, not a pip package:
     #     scripts/setup_pi.sh installs it with apt, scripts/setup_windows.ps1 with winget.
     "yt-dlp>=2025.1.1",
+
+    # --- vision (config/vision.yaml): service/vision/vision_service.py imports PIL when the server starts, so a missing
+    #     Pillow stops the whole server, not just the camera.
+    "pillow>=10.0",
 
     # --- Windows only (skipped automatically elsewhere) ---
     "pyttsx3>=2.90; sys_platform == 'win32'",     # Windows SAPI voices (tts_engine=pyttsx3)

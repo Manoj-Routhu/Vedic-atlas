@@ -8,7 +8,9 @@ only in complete sentences, each checked first; the first sentence that asserts 
 import re
 from typing import Callable
 
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+# Latin . ! ? and the Devanagari danda (Hindi) end a sentence at the following whitespace; the full-width Japanese
+# marks end it with no whitespace after them. Without these a Hindi/Japanese reply was held until the stream ended.
+_SENTENCE_END = re.compile(r"(?<=[.!?\u0964\u0965])\s+|(?<=[\u3002\uff01\uff1f])\s*|\n+")
 
 
 class SentenceClaimGuard:

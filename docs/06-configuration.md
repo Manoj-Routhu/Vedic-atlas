@@ -40,7 +40,7 @@ both also required at runtime). See the setup notes in
 | `app: AppSectionConfig` | `name="Veda"`, `port=8000`, `max_history=30`, `log_level="INFO"` |
 | `inference: InferenceConfig` | `backend="ollama"`, `ollama_host`, `model_alias="qwen-wire"`, `model_path=None`, `n_ctx=4096`, `n_threads=None`, `num_batch=None`, `timeout=120`, `num_predict=512`, `temperature=0.7`, `keep_alive="30m"`, `think=False`, `routing_num_predict=64`, `summary_num_predict=256`, `verify_on_boot=True`, `warmup_on_boot=True` |
 | `embedding: EmbeddingConfig` | `enabled=False`, `model_id="BAAI/bge-small-en-v1.5"`, `model_path=None`, `cache_dir="data/embeddings"`, `top_k=5`, `min_score=0.3`, `sources=["fact","summary"]` (**config/embedding.yaml sets `enabled=true`, `model_path=data/bge-small-en-v1.5`, `top_k=3`, `min_score=0.5`**; `cache_dir` is no longer used) |
-| `audio: AudioConfig` | `wake_word_enabled=True`, `wake_engine="openwakeword"` (**config/audio.yaml sets `none` for v1**: no wake word, everything is transcribed while unmuted), `wake_hotkey="<f9>"`, `wake_window_sec=8.0`, `wake_keyword_path=None`, `wake_oww_model="hey_veda"`, `wake_oww_model_path="data/models/openwakeword/hey_veda.onnx"`, `wake_threshold=0.5`, `daemon_trigger="auto"`, `hotkey="<f8>"` (mute hotkey — separate binding from the wake hotkey), `stt_model="base.en"`, `stt_model_path=None`, `tts_engine="auto"` (`auto` = `pyttsx3` on Windows, `piper` on Linux/Pi; Piper needs `tts_model_path` pointing at a voice `.onnx` with its `.onnx.json` beside it; a missing voice or package stops voice at startup with a clear error)`, `tts_voice="zira"`, `tts_model_path=None`, `mic_device_index=None`, `speaker_device_index=None`, `voice_enabled=True`, `speak_replies=True`, `min_transcript_chars=2`, `speak_timeout_sec=60.0`, `post_speak_settle_sec=0.4`, `echo_guard=True`, `vad: VadConfig` |
+| `audio: AudioConfig` | `wake_word_enabled=True`, `wake_engine="openwakeword"` (**config/audio.yaml sets `none` for v1**: no wake word, everything is transcribed while unmuted), `wake_hotkey="<f9>"`, `wake_window_sec=8.0`, `wake_keyword_path=None`, `wake_oww_model="hey_veda"`, `wake_oww_model_path="data/models/openwakeword/hey_veda.onnx"`, `wake_threshold=0.5`, `daemon_trigger="auto"`, `hotkey="<f8>"` (mute hotkey — separate binding from the wake hotkey), `stt_model="base.en"` (config/audio.yaml sets `small`), `stt_model_path=None` (config points at `data/models/whisper-small`), `stt_backend="faster_whisper"` (`whisper_cpp` until the Pi adapter lands), `stt_language="auto"` (detect the language; clips shorter than `stt_auto_min_sec` reuse the last confidently detected language; switch at runtime with `/language en|hi|...|auto`; an `.en` model is pinned to `en`), `stt_auto_min_sec=2.5`, `stt_threads=None`, `stt_timeout=120.0`, `tts_engine="auto"` (`auto` = `pyttsx3` on Windows, `piper` on Linux/Pi; the repo sets `piper`)`, `tts_voice="zira"` (pyttsx3 hint), `tts_model_path` (default Piper voice), `tts_voice_map` (language code -> Piper `.onnx`; missing language falls back to the default voice; a missing voice or package stops voice at startup with a clear error), `mic_device_index=None`, `speaker_device_index=None`, `voice_enabled=True`, `speak_replies=True`, `min_transcript_chars=2`, `speak_timeout_sec=60.0`, `post_speak_settle_sec=0.4`, `echo_guard=True`, `vad: VadConfig` |
 | `audio.vad: VadConfig` | `engine="energy"`, `aggressiveness=2`, `frame_duration_ms=30`, `min_rms=300.0`, `speech_ratio=3.0`, `noise_adapt=0.05`, `start_frames=3`, `silence_ms=700`, `max_utterance_sec=15.0`, `pre_roll_frames=5` |
 | `audio.speaker_id: SpeakerIdConfig` | `enabled=False`, `backend="resemblyzer"`, `profiles_dir="data/speaker_profiles"`, `match_threshold=0.6`, `require_known_speaker=False`, `min_enroll_seconds=12.0`, `score_window_sec=2.0` — multi-speaker voice recognition; off and purely additive by default. `backend="eagle"` (Picovoice) remains available — see `docs/voice/open-source-wake-speaker-design.md` |
 | `sensing: SensingConfig` | `proactivity="medium"`, `debounce_window_sec=30.0`, `rate_limit_max=6`, `rate_limit_window_sec=60.0` |
@@ -57,6 +57,46 @@ both also required at runtime). See the setup notes in
 | `agents: AgentsConfig` | `supervisor/responder/system: AgentEntry` (each `enabled=True`, `model=None` → inherits `inference.model_alias`, `description=""`, `skills=[]`), `tasks` / `lookup` / `memory: AgentEntry` (descriptions only), `session_ttl_sec=900` (session working state older than this is ignored). The `llm_routing`, `tools_enabled` and `orchestrator_enabled` flags no longer exist: there is no routing and the orchestrator is the only path |
 | `prompting: PromptingConfig` (config/prompting.yaml) | `budgets` (per-stage prompt token budgets; a missing key keeps the `PromptBudgets` default: `control=3000`, `narrate=500`, `chat=1500`, `observation_max=320`, `chat_history_turns=8`), `control_history_exchanges=2` (complete user+reply exchanges shown to the control decode), `turn_chars=200`, `user_message_chars=500` |
 | `skills: SkillsConfig` | `terminal` (`permission_level="approve"`, extra: `working_directory`, `timeout`, `blocked_commands`, `blocked_patterns`), `file_ops` (`permission_level="notify"`, extra: `allowed_paths`, `blocked_paths`), `tasks` (`permission_level="notify"`), `custom_skills_dir="data/custom_skills"` |
+| `app.multilingual: MultilingualConfig` | `enabled=true`, `reject_unknown=true`, `min_letters=8`, `unknown_reply="Sorry, I didn't understand that. Could you say it again?"` — see "Multilingual replies" below |
+
+## Multilingual replies
+
+A turn that is not English names its language once, in the control decode (the `language` key is OPTIONAL: an English turn leaves it out, so the normal flow pays no extra output tokens). `ControlDecision.language` carries the
+model's own label (`"Hindi"`) or `"unknown"`; `domain/policies/language_policy.py`
+overrides it for the script it reads exactly (Devanagari/Hindi), so Hindi can never be mislabelled.
+
+**Supported languages: English and Hindi, and nothing else.** Any other language the model names (German,
+Japanese, ...) is treated as English, and the reply is English: the device has no recognition or voice for it.
+
+The name is then stated explicitly in each reply prompt (`The user wrote in Hindi. Write your entire
+reply in Hindi.`; an English turn gets no such line and keeps the original short instruction) — far more reliable on a small model than the abstract "reply in the user's language"
+rule. The same line goes into the narrate stage, so `reply_mode: llm` tool results are phrased in the
+user's language rather than the provider's English.
+
+Tools with `reply_mode: template` (weather, tasks, currency, clock, calendar, gmail, …) still build their
+sentence in English inside the adapter — deliberately, so the tool's own numbers and names are spoken
+verbatim. When the turn's language is not English, that finished sentence is translated once at reply
+assembly (`assistant_orchestrator._localize` → `translate_stage`). The translate prompt carries only the
+target language and the sentence — never the user's question, which a small model otherwise repeats
+instead of translating. A translation is rejected and the English sentence kept when its numbers are not
+in the source sentence (checked with `is_grounded` against the sentence alone) or when it is an echo of
+the user's message (`domain/policies/echo_policy.py`, similarity ≥ 0.85). English turns pay no extra cost.
+
+When `app.multilingual.reject_unknown` is on and the model names no readable language for a message that
+plausibly is language (≥ 2 words, ≥ `min_letters` letters), the turn answers `unknown_reply` without a
+chat completion. Tool and clarification routes are never rejected: picking a tool or asking a question is
+proof the message was understood.
+
+Plain chat has its own echo backstop (`domain/policies/echo_policy.py`). The first sentence is held before
+it is shown; if it is the user's own message (normalised similarity ≥ 0.85), the stream is cancelled and
+the model is asked once more with an explicit "do not repeat the user" instruction. If it echoes again the
+turn answers a fixed sentence in the turn's language (`fallback_reply`, English for languages it does not
+cover) — the user's own words are never shown back.
+
+Limits: this covers text and the LLM side of voice. `audio.stt_model/…` is still an English-only Whisper
+checkpoint and `audio.tts_voice` a single SAPI voice, so spoken input in other languages is transcribed /
+spoken with English models until those two are swapped (see docs/voice/).
+
 
 The repo's actual `config/*.yaml` files override a handful of these
 defaults for the demo profile — notably `inference.yaml` sets
@@ -135,3 +175,72 @@ Besides `ExceptionCode`/`ErrorMessage` (covered in
 All enums in this file override `__repr__`/`__str__` to return `.value`.
 
 `inference.prompt_cache_mb` (llama_cpp only, schema default `0`, **config/inference.yaml sets `768`**): RAM for a cache of evaluated prompt prefixes shared across chat, control-decode and content prompts. Without it every call re-reads its whole prompt because the prompts alternate; measured warm: chat 14 s -> 2.4 s, routing 5.5 s -> 2.4 s, tool decision 10 s -> 4.2 s. About 70 MB per cached ~500-token prefix; use `0` on a small device.
+
+## Switching the STT language
+
+The shipped default is `stt_language: en`, which runs the English-only model in `audio.stt_english_model_path` (the same speed as before the multilingual feature); the multilingual model (`stt_model_path`, Whisper small, about 2.5x slower) loads only after the first switch to `auto` or another language, and decodes greedily (`beam_size=1`). `stt_language: auto` detects each utterance and keeps a sticky hint from the last confident detection, used for
+clips shorter than `stt_auto_min_sec` (2.5 s by default) where Whisper's language ID is unreliable. A single
+language can be pinned at runtime with `/language en|hi` (or `auto`) in the CLI; any other code is refused; the same switch is
+`POST /api/voice/language`. The current value is reported by `/api/voice/status` and `/language` with no argument.
+
+## Latin tool arguments
+
+A tool parameter can declare `format: latin` (`config/tools/weather.yaml`, `weather_forecast.yaml`). The
+control prompt asks the model to transliterate names (`???????? -> Hyderabad`), and
+`domain/policies/argument_policy.py` repairs a non-compliant decode before the call runs:
+`place_names.to_latin()` first applies a spelling fix for the names Whisper mangles, then `unidecode` for any
+other non-Latin name. A value that still cannot be resolved is left for the tool and ends in a clarification,
+not a guessed city. Parameters without the flag (e.g. a task title) stay in the user's language.
+
+## Multilingual speech output
+
+`audio.tts_engine: piper` (shipped, on the laptop and the Pi alike) with `audio.tts_voice_map` selects the voice from
+the turn's reply language (`en`, `hi`). `auto` would choose Windows speech (pyttsx3) on a Windows laptop, which
+has English voices only and produces no audio at all for Hindi. The staged voices live in
+`data/models/piper/`: `en_US-lessac-medium`, `hi_IN-priyamvada-medium` (each `.onnx` +
+`.onnx.json`; `scripts/setup_pi.sh` and `setup_windows.ps1` download them). Voices load lazily and are cached; Piper runs
+fully offline. A reply that comes out in plain English during a Hindi turn (a failed translation) is spoken with
+the English voice. `pyttsx3` remains available by setting `tts_engine: pyttsx3` (English only).
+
+
+## Response time: where it goes, and the settings that control it
+
+Measured on a Core Ultra 7 laptop (8 cores, llama-cpp-python without AVX2) with the 4B model. The control decision, not the
+reply, is the slow step (36-94 s per turn in live use).
+
+| Part of a control call | Measured | Per call |
+|---|---|---|
+| Re-reading the NEW prompt text (history, ACTIVE, date, your message: ~150 tokens; the ~3,000-token static prompt is cached) | 4.5-4.8 tok/s | ~30 s |
+| Generating the JSON answer (~25 tokens, with the grammar) | 1.5-2.3 tok/s | ~11-17 s |
+
+Generation slows with the length of the prompt (same grammar, 8 threads: 8.4 tok/s at a 38-token prompt, 4.3 at 1,038, 2.9 at
+2,038), and the JSON grammar costs about 25% (6.8 vs 8.9 tok/s at 4 threads). Warm-up is not the cause: it happens once at boot.
+
+What the settings do:
+
+- `prompting.control_history_exchanges` (2) and `prompting.control_turn_chars` (200): history is re-read on every turn that includes it,
+  so the real saving comes from `continues_previous` below (a stand-alone message gets none). Cutting it further was tested and **hurt**:
+  1 exchange got 1 of 6 follow-ups right where the answer needed the earlier exchange (2 got 6 of 6), and clipping to 100/50 characters
+  lost a name in a long reply. Chat keeps `turn_chars` (200). The eval sets cannot show this (only 2 of 143 cases have 2 exchanges).
+- Pi: see `docs/18-pi-response-time.md` (what carries over, the cache risk, and the benchmark to run on the Pi).
+- `agents.session_ttl_sec` (300): how long the last tool is shown to the decider as `ACTIVE:`. A tool that takes no parameters
+  (the room sensor) is never shown, because a follow-up has nothing to reuse and a message the model cannot read otherwise
+  "continues" it (measured: garbled Hindi flipped from web_search to the room sensor).
+- `audio.stt_unclear_below` (-1.0) and `audio.stt_shaky_below` (-0.7): Whisper's average log-probability for what it heard
+  (about -0.4 for clear speech). Below the first, Veda says "I didn't catch that" with no model call; between the two it answers
+  but does not inherit the previous tool. Lower both (more negative) if clear speech is being refused.
+- `config/hardware/laptop.yaml` (`VEDA_DEVICE=laptop`, which `setup_windows.ps1` adds to `.env`): `n_threads: 8`, measured +37-43%
+  generation speed on this laptop. Not for the Pi.
+- The llama-cpp-python build matters most on x86: the generic wheel reports no AVX2/FMA and is 3-6x slower than a build for the
+  CPU (`setup_windows.ps1` builds it when Visual Studio Build Tools with the C++ workload are installed). The Pi compiles its own
+  in `setup_pi.sh`.
+
+- **A new question must not inherit the last topic** (`session_state_policy.continues_previous`): the previous web search
+  (`ACTIVE:`) and the last exchange (`RECENT:`) are shown to the decider only for a message that points back at them: a pronoun
+  or "there / that / one", an opening "and / also / what about / how about" (after fillers such as "ok"), or a message of two
+  words or fewer; English and Hindi. Measured: after "latest news about cricket", "tell me a joke" searched "cricket news" and a Hindi
+  "what is the capital of India" searched "current prime minister of Japan". Other tools keep their state, because their
+  slots (a place) are what a follow-up reuses.
+- **Microphone:** `scripts/mic_calibrate.py` measures the quiet room and your voice and suggests `vad.min_rms`. The detector is
+  loudness-based, so in a room whose background is close to a quiet voice every click becomes a short utterance that is sent to
+  Whisper, and capture is paused while it is processed.

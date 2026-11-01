@@ -34,6 +34,8 @@ def build_inference_client(
     timeout: float = 120.0,
     prompt_cache_mb: int = 0,
     use_mmap: bool = True,
+    flash_attn: bool = False,
+    kv_cache_type: str = "f16",
     model_lock=None,
 ) -> InferencePort:
     backend = backend.lower().strip()
@@ -74,6 +76,8 @@ def build_inference_client(
             think=think,
             prompt_cache_mb=prompt_cache_mb,
             use_mmap=use_mmap,
+            flash_attn=flash_attn,
+            kv_cache_type=kv_cache_type,
             model_lock=model_lock,
         )
 

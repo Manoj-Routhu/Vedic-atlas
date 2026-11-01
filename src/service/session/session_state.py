@@ -41,9 +41,21 @@ class SessionStateService:
     def active_line(self, session_id: str, speaker_id: str = "") -> str:
         return active_line(self.get(session_id, speaker_id), self._now())
 
-    def render_active(self, state: SessionContext | None) -> str:
-        """The `ACTIVE:` line for state already read this turn (one read per turn, one clock)."""
-        return active_line(state, self._now())
+    def _has_nothing_to_carry(self, state: SessionContext | None) -> bool:
+        """A tool that takes no parameters (the room sensor) leaves nothing for a follow-up to reuse. Showing it anyway
+        only tempts the decider to repeat it for any message it cannot make sense of (measured: two garbled Hindi
+        transcripts flipped from web_search to the room sensor)."""
+        if state is None or state.slots:
+            return False
+        manifest = self._manifests.get(state.tool)
+        return manifest is not None and not manifest.params
+
+    def render_active(self, state: SessionContext | None, message: str | None = None) -> str:
+        """The `ACTIVE:` line for state already read this turn (one read per turn, one clock). `message` is the user's new
+        message: a previous web search is only shown to a message that continues it."""
+        if self._has_nothing_to_carry(state):
+            return ""
+        return active_line(state, self._now(), message)
 
     def purge_expired(self) -> int:
         try:

@@ -59,6 +59,9 @@ def allow_unavailable_av() -> bool:
     return True
 
 
+SUPPORTED_LANGUAGES = ("en", "hi")
+
+
 class FasterWhisperProvider:
     """Implements STTPort via a locally cached faster-whisper model."""
 
@@ -69,10 +72,32 @@ class FasterWhisperProvider:
         *,
         noise_suppression_enabled: bool = True,
         noise_suppression_strength: float = 0.75,
+        language: str = "auto",
+        threads: int | None = None,
+        timeout: float = 120.0,
+        auto_min_sec: float = 2.5,
+        english_model_size: str | None = None,
+        allowed_languages: tuple[str, ...] = SUPPORTED_LANGUAGES,
     ):
         self._model_size = model_size
+        # The only languages this device speaks. Auto-detection chooses among THESE, never among Whisper's ~99:
+        # a clip it thinks is Portuguese or Sinhala (noise, a TV, a mumble) becomes English/Hindi instead of
+        # a bogus turn in a language nobody here speaks.
+        self._allowed = tuple(dict.fromkeys(l.strip().lower() for l in allowed_languages if l.strip())) or ("en",)
+        # Optional English-only model used while the language is pinned to "en": it is ~2.5x faster than the
+        # multilingual checkpoint, so the normal (English) flow pays nothing for the multilingual feature.
+        # The multilingual model is loaded only when the language is switched to auto or another language.
+        self._english_model_size = english_model_size
+        self._fast_model = None
         self._cache_dir = str(cache_dir) if cache_dir else None
         self._model = None
+        self._threads = threads
+        self._timeout = timeout
+        self._auto_min_sec = auto_min_sec
+        # Sticky hint: the last confidently detected language. Short clips misdetect, so below auto_min_sec
+        # they reuse this instead of letting Whisper guess.
+        self._last_language: str | None = None
+        self.set_language(language, announce=False, strict=False)
         self._noise_suppressor = (
             SpectralNoiseSuppressor(strength=noise_suppression_strength)
             if noise_suppression_enabled
@@ -81,41 +106,110 @@ class FasterWhisperProvider:
         logger.info(
             "[stt] noise suppression "
             f"{'enabled' if self._noise_suppressor is not None else 'disabled'} "
-            f"strength={noise_suppression_strength:.2f}"
+            f"strength={noise_suppression_strength:.2f} "
+            f"language={self._language or 'auto'}"
         )
+
+    @property
+    def current_language(self) -> str:
+        """The pinned language, or "auto" when detection/sticky is in charge."""
+        return self._language or "auto"
+
+    @property
+    def allowed_languages(self) -> tuple[str, ...]:
+        return self._allowed
+
+    def set_language(self, language: str | None, *, announce: bool = True, strict: bool = True) -> None:
+        """Pin a supported language code ("en", "hi") or "auto" for detection + sticky.
+
+        An unsupported code is refused (strict, the runtime command) or, when it comes from the config file at boot
+        (strict=False), logged and replaced by "auto" so a stale value cannot stop speech recognition."""
+        value = (language or "auto").strip().lower()
+        if value not in ("", "auto") and value not in self._allowed:
+            if strict:
+                raise ValueError(f"unsupported language {value!r}: use auto or one of {', '.join(self._allowed)}")
+            logger.warning(f"[stt] configured language {value!r} is not supported; using auto ({', '.join(self._allowed)})")
+            value = "auto"
+        self._language = None if value in ("", "auto") else value
+        if self._language is None and str(self._model_size).rstrip("/\\").lower().endswith(".en"):
+            # An .en checkpoint cannot auto-detect; pin it instead of letting the library fail or translate.
+            self._language = "en"
+            logger.warning("[stt] English-only model with language=auto: pinning to en")
+        if announce:
+            logger.info(f"[stt] language set to {self.current_language!r}")
+
+    def _language_for(self, duration_sec: float) -> str | None:
+        """The language to pass to Whisper for this clip (None = let it detect)."""
+        if self._language:
+            return self._language
+        if duration_sec < self._auto_min_sec and self._last_language:
+            return self._last_language
+        return None
+
+    def _best_allowed(self, probabilities) -> tuple[str, float]:
+        """The most likely SUPPORTED language and its probability, from Whisper's per-language probabilities.
+        Falls back to English (first supported) when Whisper gave none."""
+        scored = [(float(p), str(l)) for l, p in (probabilities or []) if str(l) in self._allowed]
+        if not scored:
+            return self._allowed[0], 0.0
+        probability, language = max(scored)
+        return language, probability
+
+    def _remember_language(self, detected: str | None, duration_sec: float, confidence: float) -> None:
+        if self._language is not None or not detected or detected not in self._allowed:
+            return
+        if duration_sec >= self._auto_min_sec and confidence >= 0.6 and detected != self._last_language:
+            self._last_language = detected
+            logger.info(f"[stt] sticky language -> {detected!r}")
+
+    def _load(self, size: str):
+        started = time.perf_counter()
+        allow_unavailable_av()
+        from faster_whisper import WhisperModel
+
+        kwargs = {"device": "cpu", "compute_type": "int8"}
+        if self._threads:
+            kwargs["cpu_threads"] = self._threads
+        if self._cache_dir:
+            kwargs["download_root"] = self._cache_dir
+            if not Path(self._cache_dir).exists():
+                raise FileNotFoundError(
+                    f"whisper model cache not found at {self._cache_dir} — this build does "
+                    "not auto-download models. Run the installer's model-fetch step first."
+                )
+        try:
+            model = WhisperModel(size, **kwargs)
+        except Exception:
+            logger.exception(f"[stt] failed to load Whisper model {size!r}")
+            raise
+        logger.info(
+            "[stt][timing] stage=model_load "
+            f"elapsed_ms={(time.perf_counter() - started) * 1000:.0f} "
+            f"model={size!r}"
+        )
+        return model
 
     def _ensure(self):
         if self._model is None:
-            started = time.perf_counter()
-            allow_unavailable_av()
-            from faster_whisper import WhisperModel
-
-            kwargs = {"device": "cpu", "compute_type": "int8"}
-            if self._cache_dir:
-                kwargs["download_root"] = self._cache_dir
-                if not Path(self._cache_dir).exists():
-                    raise FileNotFoundError(
-                        f"whisper model cache not found at {self._cache_dir} — this build does "
-                        "not auto-download models. Run the installer's model-fetch step first."
-                    )
-            try:
-                self._model = WhisperModel(self._model_size, **kwargs)
-            except Exception:
-                logger.exception(f"[stt] failed to load Whisper model {self._model_size!r}")
-                raise
-            logger.info(
-                "[stt][timing] stage=model_load "
-                f"elapsed_ms={(time.perf_counter() - started) * 1000:.0f} "
-                f"model={self._model_size!r}"
-            )
+            self._model = self._load(self._model_size)
         return self._model
+
+    def _uses_fast_english(self) -> bool:
+        """True when this clip goes to the English-only model: one is configured and the language is pinned to en."""
+        return bool(self._english_model_size) and self._language == "en"
+
+    def _ensure_fast(self):
+        if self._fast_model is None:
+            self._fast_model = self._load(str(self._english_model_size))
+        return self._fast_model
 
     async def transcribe(self, audio: AudioWindow) -> Transcript:
         import numpy as np
 
         def _do():
             pcm = np.frombuffer(audio.pcm, dtype=np.int16).astype(np.float32) / 32768.0
-            model = self._ensure()
+            fast = self._uses_fast_english()
+            model = self._ensure_fast() if fast else self._ensure()
             if self._noise_suppressor is not None:
                 suppression_started = time.perf_counter()
                 input_rms = float(np.sqrt(np.mean(pcm * pcm))) if pcm.size else 0.0
@@ -131,15 +225,37 @@ class FasterWhisperProvider:
                     f"output_rms={output_rms:.5f} output_peak={output_peak:.5f}"
                 )
             inference_started = time.perf_counter()
-            segments, info = model.transcribe(
-                pcm, language="en", vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 500},
-                # Whisper invents text on noise ("subscribe to our channel", "Bye. Bye. Bye..."), and
-                # conditioning on its own previous output makes it loop: turn that off and reject
-                # low-confidence / repetitive output.
-                condition_on_previous_text=False,
-                no_speech_threshold=0.6, log_prob_threshold=-1.0, compression_ratio_threshold=2.4,
-            )
+
+            def _run(language):
+                return model.transcribe(
+                    pcm, language=language, task="transcribe", vad_filter=True,
+                    # Greedy decoding for the multilingual checkpoint (beam 5 is the library default and ~2x slower
+                    # on a CPU); the English-only model keeps the library default so the English flow is unchanged.
+                    # temperature=0.0 also switches off the temperature fallback: on a language the small model is weak
+                    # in (it was Telugu) a degenerate result was re-decoded up to 5 more times, 23 s for a 4 s clip; one pass
+                    # fails fast and the repetition/artefact filters downstream reject the garbage.
+                    **({} if fast else {"beam_size": 1, "temperature": 0.0}),
+                    vad_parameters={"min_silence_duration_ms": 500},
+                    # Whisper invents text on noise ("subscribe to our channel", "Bye. Bye. Bye..."), and
+                    # conditioning on its own previous output makes it loop: turn that off and reject
+                    # low-confidence / repetitive output.
+                    condition_on_previous_text=False,
+                    no_speech_threshold=0.6, log_prob_threshold=-1.0, compression_ratio_threshold=2.4,
+                )
+
+            requested = self._language_for(audio.duration_sec)
+            segments, info = _run(requested)
+            forced_confidence = None
+            if requested is None and getattr(info, "language", None) not in self._allowed:
+                # Detection runs before any decoding (the segments are produced lazily), so a clip detected as an
+                # unsupported language costs only the detection pass; the first generator is simply dropped.
+                chosen, chosen_probability = self._best_allowed(getattr(info, "all_language_probs", None))
+                logger.info(
+                    f"[stt] detected unsupported language {getattr(info, 'language', None)!r}; "
+                    f"using {chosen!r} (p={chosen_probability:.2f})"
+                )
+                segments, info = _run(chosen)
+                forced_confidence = chosen_probability   # the probability Whisper really gave it, not the pinned 1.0
             all_segments = list(segments)
             inference_ms = (time.perf_counter() - inference_started) * 1000
             # Whisper's own recommended rule: a segment that is probably silence AND low confidence is noise.
@@ -148,6 +264,30 @@ class FasterWhisperProvider:
                 if not (getattr(seg, "no_speech_prob", 0.0) > 0.6 and getattr(seg, "avg_logprob", 0.0) < -1.0)
             ]
             text = "".join(seg.text for seg in kept).strip()
+            confidence = float(forced_confidence if forced_confidence is not None else getattr(info, "language_probability", 1.0))
+            # A sub-1.2 s clip that Whisper itself calls silence is noise, not a command ("Yo, yo, yo.").
+            # The segment filter above needs BOTH no_speech and logprob to be bad; a short noisy clip often has
+            # only the first, so it would otherwise become a turn.
+            if text and audio.duration_sec < 1.2 and all_segments:
+                no_speech = max(float(getattr(seg, "no_speech_prob", 0.0)) for seg in all_segments)
+                if no_speech >= 0.6 and confidence < 0.7:
+                    logger.info(
+                        f"[stt] dropping short noise clip (audio_sec={audio.duration_sec:.2f} "
+                        f"no_speech={no_speech:.2f} language_probability={confidence:.3f}) text={text!r}"
+                    )
+                    text = ""
+            kept_quality = [
+                (max(0.0, float(getattr(seg, "end", 0.0)) - float(getattr(seg, "start", 0.0))), float(getattr(seg, "avg_logprob", 0.0)))
+                for seg in kept
+            ]
+            weight = sum(duration for duration, _ in kept_quality)
+            if text and kept_quality:
+                avg_logprob = (
+                    sum(duration * logprob for duration, logprob in kept_quality) / weight if weight > 0
+                    else sum(logprob for _, logprob in kept_quality) / len(kept_quality)
+                )
+            else:
+                avg_logprob = None
             segment_quality = [
                 (
                     max(0.0, float(getattr(seg, "end", 0.0)) - float(getattr(seg, "start", 0.0))),
@@ -156,24 +296,36 @@ class FasterWhisperProvider:
                 )
                 for seg in all_segments
             ]
-            return text, getattr(info, "language_probability", 1.0), segment_quality, inference_ms
+            detected_language = getattr(info, "language", None) or self._language or "en"
+            return text, confidence, segment_quality, inference_ms, detected_language, avg_logprob
 
         import asyncio
 
         started = time.perf_counter()
         try:
-            text, confidence, segment_quality, inference_ms = await asyncio.to_thread(_do)
+            # CTranslate2's call runs in C++ and cannot be cancelled: wrapping it in asyncio.wait_for abandons
+            # the worker thread, which then keeps burning CPU while TTS/playback starve (observed: a 120 s
+            # timeout was followed by 24 s TTS and 49 s playback for 2 s of audio). Wait for it instead; the
+            # timeout below is a warning, not a cancellation. A killable worker process is the proper fix.
+            text, confidence, segment_quality, inference_ms, detected_language, avg_logprob = await asyncio.to_thread(_do)
         except Exception:
             logger.exception("[stt] Whisper transcription failed")
             raise
+        self._remember_language(detected_language, audio.duration_sec, float(confidence))
         elapsed_ms = (time.perf_counter() - started) * 1000
+        if self._timeout and elapsed_ms > self._timeout * 1000:
+            logger.warning(
+                f"[stt] transcription took {elapsed_ms / 1000:.0f}s (soft limit {self._timeout:.0f}s); "
+                "the machine is CPU/ memory starved"
+            )
         rtf = elapsed_ms / max(audio.duration_sec * 1000, 1)
         logger.info(
             "[stt][timing] stage=whisper_model_inference "
             f"elapsed_ms={inference_ms:.0f} audio_sec={audio.duration_sec:.2f} "
             f"rtf={inference_ms / max(audio.duration_sec * 1000, 1):.2f} "
             f"segments={len(segment_quality)} "
-            f"language=en language_probability={float(confidence):.3f}"
+            f"language={detected_language} language_probability={float(confidence):.3f} "
+            f"avg_logprob={'n/a' if avg_logprob is None else format(avg_logprob, '.2f')}"
         )
         logger.info(
             "[stt][timing] stage=stt_preprocess_and_total "
@@ -185,4 +337,7 @@ class FasterWhisperProvider:
                 for index, (duration, logprob, no_speech) in enumerate(segment_quality)
             )
             logger.info(f"[stt] segment diagnostics: {quality}")
-        return Transcript(text=text, confidence=float(confidence), duration_sec=audio.duration_sec)
+        return Transcript(
+            text=text, confidence=float(confidence), language=detected_language, duration_sec=audio.duration_sec,
+            avg_logprob=avg_logprob,
+        )

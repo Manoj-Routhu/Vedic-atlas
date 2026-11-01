@@ -57,7 +57,27 @@ def _one_entry_per_system_prompt(llama_cpp, llama, capacity_bytes: int):
                     shared = llama_cpp.Llama.longest_token_prefix(old, key)
                     if old != key and key[:shared].count(turn_start) >= 2:
                         del self.cache_state[old]
-            super().__setitem__(key, value)
+            if key in self.cache_state:
+                del self.cache_state[key]
+            self.cache_state[key] = value
+            # The library drops the OLDEST entry when the cache is full. Every turn stores the control prompt first and the chat /
+            # narrate prompt after it, so the control prompt becomes the oldest entry at the worst moment, and losing it means
+            # re-reading ~3,000 tokens (about 157 s at the Pi's measured 19 tok/s). It is by far the longest prompt, so it is the
+            # one entry that is never evicted; the shorter chat / narrate entries are rebuilt cheaply.
+            pinned = max(self.cache_state, key=len)
+            while self.cache_size > self.capacity_bytes and len(self.cache_state) > 1:
+                victim = next(k for k in self.cache_state if k != pinned)
+                dropped = self.cache_state.pop(victim)
+                logger.warning(
+                    f"[llm] prompt cache full ({self.capacity_bytes // 1048576} MB): dropped a {len(victim)}-token entry "
+                    f"({dropped.llama_state_size // 1048576} MB) to keep the {len(pinned)}-token control prompt"
+                )
+            if self.cache_size > self.capacity_bytes:     # the control prompt alone does not fit: the cache cannot help
+                logger.warning(
+                    f"[llm] prompt_cache_mb={self.capacity_bytes // 1048576} is smaller than the control prompt's cached state "
+                    f"({self.cache_size // 1048576} MB): every turn will re-read it. Raise prompt_cache_mb."
+                )
+                self.cache_state.clear()
 
     return _Cache(capacity_bytes=capacity_bytes)
 
@@ -107,6 +127,8 @@ class LlamaCppClient:
         prompt_cache_mb: int = 0,
         use_mmap: bool = True,
         model_lock: threading.Lock | None = None,
+        flash_attn: bool = False,
+        kv_cache_type: str = "f16",
     ):
         path = Path(model_path)
         if not path.exists():
@@ -116,9 +138,22 @@ class LlamaCppClient:
             )
         import llama_cpp  # imported lazily so this module can be inspected without the dependency installed
 
+        extra: dict = {}
+        kv = (kv_cache_type or "f16").strip().lower()
+        if kv not in ("f16", "q8_0"):
+            raise ValueError(f"kv_cache_type must be 'f16' or 'q8_0', not {kv_cache_type!r}")
+        if kv == "q8_0":
+            # An 8-bit KV cache halves the memory of the context AND of every cached prompt (the control prompt's entry:
+            # ~527 MB -> ~263 MB on the Pi). llama.cpp can only quantise the V cache with flash attention on.
+            extra.update(type_k=llama_cpp.GGML_TYPE_Q8_0, type_v=llama_cpp.GGML_TYPE_Q8_0)
+            flash_attn = True
+        if flash_attn:
+            extra["flash_attn"] = True
         self._llama = llama_cpp.Llama(
-            model_path=str(path), n_ctx=n_ctx, n_threads=n_threads, use_mmap=use_mmap, verbose=False
+            model_path=str(path), n_ctx=n_ctx, n_threads=n_threads, use_mmap=use_mmap, verbose=False, **extra
         )
+        if extra:
+            logger.info(f"[llm] flash_attn={bool(flash_attn)} kv_cache_type={kv}")
         if prompt_cache_mb > 0:
             # The context only reuses its KV cache when consecutive prompts share a start. Veda alternates between
             # chat, routing and tool-call prompts, each with a long fixed prefix, so every call re-read its whole
@@ -154,11 +189,21 @@ class LlamaCppClient:
         return messages
 
     @staticmethod
-    def _strip_thinking(text: str) -> str:
+    def _strip_thinking(text: str, finished: bool = False) -> str:
         """Safety net: remove any <think>...</think> block, or an unclosed
         one if generation was cut off mid-thought, that slipped through
-        despite the /no_think prompt directive."""
+        despite the /no_think prompt directive.
+
+        `finished` = the model stopped by itself (finish_reason "stop"), not at the token limit. Qwen3 sometimes opens
+        `<think>` under /no_think and then writes its ANSWER without ever closing the tag
+        (`<think>
+
+Es ist 14:52 Uhr.`). Deleting everything after an unclosed tag threw that answer away (an empty
+        reply, then retries). When the model finished on its own, the text after the tag is the answer and is kept;
+        a generation cut off at the limit is still discarded, because that is unfinished reasoning."""
         text = _THINK_BLOCK_RE.sub("", text)
+        if finished and _THINK_OPEN in text:
+            return text.replace(_THINK_OPEN, "", 1).strip()
         text = _UNCLOSED_THINK_RE.sub("", text)
         return text.strip()
 
@@ -199,8 +244,9 @@ class LlamaCppClient:
             result = await asyncio.wait_for(asyncio.to_thread(_run), timeout=timeout or self._timeout)
         except asyncio.TimeoutError as exc:
             raise InferenceTimeoutError(f"llama.cpp request timed out: {exc}") from exc
-        content = result["choices"][0]["message"]["content"]
-        return self._strip_thinking(content) if not self._think else content
+        choice = result["choices"][0]
+        content = choice["message"]["content"]
+        return self._strip_thinking(content, finished=choice.get("finish_reason") == "stop") if not self._think else content
 
     def _perf_reset(self) -> None:
         try:

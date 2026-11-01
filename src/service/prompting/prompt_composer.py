@@ -27,6 +27,8 @@ from typing import Callable, Sequence
 
 from domain.entities.conversation import Turn
 from domain.entities.tool_manifest import ToolManifest, ToolParam
+from domain.policies.language_policy import language_of
+from domain.policies.session_state_policy import continues_previous
 from domain.policies.tool_call_schema import CONTROL_KEYS
 from domain.policies.token_budget_policy import PromptBudgets, estimate_tokens
 from domain.ports.tool_manifest_store_port import PromptStorePort
@@ -63,6 +65,8 @@ class PromptComposer:
         count_tokens: Callable[[str], int] = estimate_tokens,
         now: Callable[[], datetime] = datetime.now,
         turn_chars: int = _TURN_CHARS,
+        control_turn_chars: int | None = None,
+        history_for_follow_ups_only: bool = True,
         user_message_chars: int = _USER_MSG_CHARS,
     ):
         self._prompts = prompts
@@ -71,6 +75,8 @@ class PromptComposer:
         self._count = count_tokens
         self._now = now
         self._turn_chars = turn_chars
+        self._control_turn_chars = control_turn_chars
+        self._history_follow_ups_only = history_for_follow_ups_only
         self._user_msg_chars = user_message_chars
         self._control_static: dict[tuple[str, ...], str] = {}  # keyed by the JSON key order only, never by a tool subset
 
@@ -90,6 +96,21 @@ class PromptComposer:
     def _clip(text: str, limit: int) -> str:
         text = " ".join((text or "").split())
         return text if len(text) <= limit else text[: limit - 1] + "…"
+
+    def _clip_turn(self, text: str, role: str = "user") -> str:
+        """A history turn, clipped for the control prompt. The limit is in characters but the cost is in tokens, and
+        history is re-read on every turn (it follows the cached prefix): measured with the model's tokenizer, a Hindi
+        sentence costs ~3x the tokens of the same length in English, and a noise transcript in
+        another script ~5x. Turns written mostly in a non-Latin script therefore get a quarter of the characters, so
+        a Hindi exchange does not slow the English turns that follow it."""
+        flat = " ".join((text or "").split())
+        limit = self._turn_chars
+        if self._control_turn_chars is not None:      # configured for the control prompt only (chat clips with turn_chars)
+            limit = self._control_turn_chars
+        letters = [c for c in flat if c.isalpha()]
+        if letters and sum(1 for c in letters if ord(c) > 127) / len(letters) > 0.3:
+            return self._clip(flat, max(48, limit // 4))
+        return self._clip(flat, limit)
 
     def _static_control_text(self, key_order: tuple[str, ...]) -> str:
         """persona_lite + control_stage.md with EVERY tool signature. Byte-identical every turn: it holds no date,
@@ -112,6 +133,10 @@ class PromptComposer:
             for ex in m.examples:
                 if ex.prompt_example:
                     decision = {"needs_live_data": True, "calls": list(ex.calls)}
+                    # Only a non-English example names its language (the key is optional: English leaves it out).
+                    language = language_of(ex.user)
+                    if language:
+                        decision["language"] = language
                     lines.append(f"User: {ex.user}\n" + json.dumps(decision, separators=(",", ":"), ensure_ascii=False))
         return "\n".join(lines)
 
@@ -161,11 +186,16 @@ class PromptComposer:
         user_line = f"USER: {self._clip(user_message, self._user_msg_chars)}"
         trimmed: list[str] = []
         keep = exchanges
+        if history and self._history_follow_ups_only and not continues_previous(user_message):
+            # The message points back at nothing ("tell me a joke"), so the last exchange can only mislead: measured, the
+            # decider searched "cricket news" for it because the exchange before was about cricket. It also saves the
+            # tokens, which are re-read on every turn.
+            history = ()
         while True:
             lines = [
-                f"{'User' if t.role == 'user' else 'Veda'}: {self._clip(t.content, self._turn_chars)}"
+                f"{'User' if t.role == 'user' else 'Veda'}: {self._clip_turn(t.content, t.role)}"
                 for t in self._exchange_turns(history, keep)
-                if self._clip(t.content, self._turn_chars)
+                if self._clip_turn(t.content, t.role)
             ]
             # show_empty: say "none" explicitly so the model SEES that there is nothing to continue, instead of
             # having to infer it from an absent line (omitting is the default and the design doc's layout).
@@ -185,17 +215,36 @@ class PromptComposer:
         }
         return ComposedPrompt(system=system, prompt=volatile, tokens=total, sections=sections, trimmed=trimmed)
 
-    def narrate_stage(self, user_message: str, tool_results: Sequence[str]) -> ComposedPrompt:
+    def narrate_stage(self, user_message: str, tool_results: Sequence[str], language: str | None = None) -> ComposedPrompt:
         """Phrase tool results for the user: the `narrate` task of the content stage."""
         result = "\n".join(r.strip() for r in tool_results if r and r.strip())
-        return self.content_stage("narrate", result, user_message)
+        return self.content_stage("narrate", result, user_message, language=language)
 
-    def content_stage(self, task: str, document: str, user_message: str, *, max_tokens: int = 0) -> ComposedPrompt:
+    def translate_stage(self, text: str, language: str) -> ComposedPrompt:
+        """Translate ONE finished template sentence into `language`, facts untouched.
+
+        Deliberately carries no QUESTION / user text: a weak model that sees the user's own sentence beside
+        "translate into <language>" repeats the question instead of translating TEXT (the echo bug)."""
+        system = self._prompts.get("translate")
+        clipped = self.cap_tokens(text, self.budgets.observation_max)
+        prompt = f"TARGET LANGUAGE: {language}\nTEXT:\n{clipped}\n\nTRANSLATION:"
+        return ComposedPrompt(
+            system=system,
+            prompt=prompt,
+            tokens=self._count(system) + self._count(prompt),
+            sections={"static": self._count(system), "text": self._count(clipped)},
+        )
+
+    def content_stage(
+        self, task: str, document: str, user_message: str, *, max_tokens: int = 0, language: str | None = None
+    ) -> ComposedPrompt:
         """The data plane: reason over ONE capped document. No tool list, no history, ever.
 
         SYSTEM is the same for every task (persona + preamble), so all tasks share one cached prefix; the task
         instruction rides in the volatile tail. `max_tokens` is the producing tool's `max_result_tokens`, applied
-        before anything else; the stage's own `observation_max` / `narrate` budgets still apply after it."""
+        before anything else; the stage's own `observation_max` / `narrate` budgets still apply after it.
+        `language` is the turn's language (from the control decode or the deterministic detector); when it is
+        None the detector runs on the question itself."""
         if task not in CONTENT_TASKS:
             raise ValueError(f"unknown content task {task!r}; expected one of {sorted(CONTENT_TASKS)}")
         system = f"{self._prompts.get('persona_lite')}\n\n{self._prompts.get('content_stage')}"
@@ -212,9 +261,13 @@ class PromptComposer:
                 trimmed.append("tool_result")
         question = self._clip(user_message, self._user_msg_chars)
         today = f"TODAY: {self._now().strftime('%d %b %Y')}"
+        language = language or language_of(user_message)
+        # Tool results are often English (a provider's numbers/headers); naming the language keeps the
+        # narration in the user's, not the tool's, language.
+        language_line = f"\nLANGUAGE: the user wrote in {language}; answer in {language}." if language else ""
 
         def build(doc: str) -> str:
-            return f"TASK: {instruction}\n{today}\nQUESTION: {question}\n{label}:\n{doc}\n\nAnswer:"
+            return f"TASK: {instruction}\n{today}\nQUESTION: {question}\n{label}:\n{doc}{language_line}\n\nAnswer:"
 
         prompt = build(result)
         total = self._count(system) + self._count(prompt)

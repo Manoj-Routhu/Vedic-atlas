@@ -1,4 +1,9 @@
 # VEDA_DEVICE=laptop: development machine. Generous limits; never tune timeouts from these numbers.
+inference:
+  # Generation defaults to cpu_count/2 = 4 threads here. Measured on this laptop (Core Ultra 7, 8 cores): 8 threads
+  # generate 37-43% faster. NOT for the Pi: its own profile found no gain beyond llama.cpp's default there.
+  n_threads: 8
+  # prompt_cache_mb is deliberately NOT raised here: the Pi cannot go above 768 MB, so the laptop uses the same 768 and behaves like it.
 vision:
   binary_path: data/tools/llama-b11716-win-cpu-x64/llama-server.exe
   n_threads: 6

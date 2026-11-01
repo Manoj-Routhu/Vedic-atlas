@@ -57,11 +57,11 @@ def test_non_ascii_is_kept_as_text_not_escaped():
 # ---- the render: the bytes the server sends ---------------------------------------------------------------------------------------
 
 def test_the_render_is_the_serving_prompt_followed_by_the_decision():
-    r = render(sample(active="ACTIVE: get_weather | place=Oslo | 2 min ago", history=[{"user": "weather in oslo", "veda": "It is 4 degrees."}]))
+    r = render(sample(user="and in nagpur", active="ACTIVE: get_weather | place=Oslo | 2 min ago", history=[{"user": "weather in oslo", "veda": "It is 4 degrees."}]))
     assert r.prompt.startswith("<|im_start|>system\n") and r.prompt.endswith("<|im_end|>\n<|im_start|>assistant\n")
     assert "\n/no_think<|im_end|>\n<|im_start|>assistant\n" in r.prompt
     assert "ACTIVE: get_weather | place=Oslo | 2 min ago" in r.volatile and "User: weather in oslo" in r.volatile and "Veda: It is 4 degrees." in r.volatile
-    assert r.volatile.rstrip().endswith("USER: weather in nagpur") and "TODAY: Friday 09 Oct 2026, 18:30." in r.volatile
+    assert r.volatile.rstrip().endswith("USER: and in nagpur") and "TODAY: Friday 09 Oct 2026, 18:30." in r.volatile
     assert r.completion == r.label_json + "<|im_end|>" and r.label_json.startswith('{"needs_live_data":true')
 
 

@@ -17,3 +17,7 @@ class Transcript:
     language: str = "en"
     is_final: bool = True
     duration_sec: float = 0.0
+    # Whisper's average log-probability of the words it kept (duration-weighted over segments): about -0.2 for clear
+    # speech, below -1.0 for a mumble it could not make out. `confidence` above is only the LANGUAGE probability.
+    # None when the backend does not report it.
+    avg_logprob: float | None = None

@@ -31,7 +31,8 @@ def _t(role, content):
 def test_control_schema_shape_and_default_key_order():
     s = build_control_schema(MANIFESTS)
     assert list(s["properties"]) == list(CONTROL_KEYS)
-    assert s["required"] == ["needs_live_data", "calls"]   # advise / also_chat / clarification are optional: written only when set
+    # language / advise / also_chat / clarification are optional: an English turn must not pay output tokens for them
+    assert s["required"] == ["needs_live_data", "calls"]
     assert CONTROL_KEYS[0] == "needs_live_data"            # the flag is committed to before the calls
     assert s["additionalProperties"] is False
     calls = s["properties"]["calls"]
@@ -46,7 +47,7 @@ def test_control_schema_can_never_force_a_call():
 
 
 def test_control_schema_key_order_is_configurable_but_must_be_a_permutation():
-    order = ("calls", "needs_live_data", "advise", "also_chat", "clarification")
+    order = ("calls", "needs_live_data", "advise", "also_chat", "clarification", "language")
     s = build_control_schema(MANIFESTS, key_order=order)
     assert list(s["properties"]) == list(order)
     with pytest.raises(ValueError):
@@ -57,17 +58,17 @@ def test_control_schema_validates_real_decisions():
     jsonschema = pytest.importorskip("jsonschema")
     schema = build_control_schema(MANIFESTS)
     ok = [
-        {"needs_live_data": False, "calls": [], "clarification": None},
-        {"needs_live_data": True, "calls": [{"tool": "get_weather", "args": {"place": "Tokyo"}}], "clarification": None},
-        {"needs_live_data": False, "calls": [], "clarification": "Which task do you mean?"},
+        {"needs_live_data": False, "calls": [], "language": "English"},
+        {"needs_live_data": True, "calls": [{"tool": "get_weather", "args": {"place": "Tokyo"}}], "language": "English"},
+        {"needs_live_data": False, "calls": [], "clarification": "Which task do you mean?", "language": "English"},
     ]
     for doc in ok:
         jsonschema.validate(doc, schema)
     bad = [
-        {"needs_live_data": False, "calls": [{"tool": "rm_rf", "args": {}}], "clarification": None},        # unknown tool
-        {"needs_live_data": False, "calls": [{"tool": "tasks", "args": {"action": "zap"}}], "clarification": None},
-        {"needs_live_data": False, "calls": [], "clarification": "x" * 201},
-        {"calls": [], "clarification": None},                                                                # flag missing
+        {"needs_live_data": False, "calls": [{"tool": "rm_rf", "args": {}}], "language": "English"},        # unknown tool
+        {"needs_live_data": False, "calls": [{"tool": "tasks", "args": {"action": "zap"}}], "language": "English"},
+        {"needs_live_data": False, "calls": [], "clarification": "x" * 201, "language": "English"},
+        {"calls": [], "clarification": None, "language": "English"},                                         # flag missing
     ]
     for doc in bad:
         with pytest.raises(jsonschema.ValidationError):
@@ -125,7 +126,7 @@ def test_prompt_examples_only_reference_real_tools_and_args():
 
 
 def test_examples_follow_the_schema_key_order():
-    for order in (CONTROL_KEYS, ("calls", "needs_live_data", "advise", "also_chat", "clarification")):
+    for order in (CONTROL_KEYS, ("calls", "needs_live_data", "advise", "also_chat", "clarification", "language")):
         system = _composer().control_stage("x", key_order=order).system
         lines = [l for l in system.splitlines() if l.startswith("{") and "needs_live_data" in l and "calls" in l]
         assert len(lines) >= 8
@@ -167,13 +168,13 @@ def test_the_mention_without_request_pattern_and_the_no_fitting_tool_rule_are_pr
 
 def test_volatile_tail_order_active_recent_today_user():
     p = _composer().control_stage(
-        "should I bring an umbrella?", [_t("user", "weather in Tokyo"), _t("assistant", "18 degrees")],
+        "and should I bring an umbrella?", [_t("user", "weather in Tokyo"), _t("assistant", "18 degrees")],
         "ACTIVE: get_weather | place=Tokyo | 3 min ago",
     )
     lines = p.prompt.splitlines()
     assert lines[0].startswith("ACTIVE:") and lines[1] == "RECENT:"
     assert lines[2] == "User: weather in Tokyo" and lines[3] == "Veda: 18 degrees"
-    assert lines[4].startswith("TODAY: Wednesday 07 Oct 2026") and lines[5] == "USER: should I bring an umbrella?"
+    assert lines[4].startswith("TODAY: Wednesday 07 Oct 2026") and lines[5] == "USER: and should I bring an umbrella?"
     assert p.trimmed == []                                   # a normal turn fits the budget with its history intact
 
 
@@ -230,7 +231,7 @@ def test_shipped_prompting_yaml_loads_and_builds_valid_budgets():
     cfg = load_full_config().prompting
     b = PromptBudgets(**cfg.budgets)
     assert b.control > b.chat and b.observation_max > 0 and cfg.control_history_exchanges == 2
-    assert (cfg.turn_chars, cfg.user_message_chars) == (200, 500)
+    assert (cfg.turn_chars, cfg.control_turn_chars, cfg.user_message_chars) == (200, 200, 500)
 
 
 def test_prompting_config_rejects_unknown_or_negative_budgets_and_missing_keys_fall_back():
@@ -268,8 +269,11 @@ def test_a_decision_without_the_optional_clarification_key_parses():
 # The composer's default counter (estimate_tokens, 3.4 chars/token) deliberately over-counts: the static block measures 2588
 # with it today, against ~2,240 measured with the real tokenizer (training/README.md). docs/12's 2,400-token cap is therefore
 # ~2,750 in this counter's units. Raised to 3,000 when budgets.control went from 3000 to 3450 (+15%, the 4B model is the
-# only supported one) to make room for P3/P5. Now equal to budgets.control (3550) - 400 (the room kept for ACTIVE/RECENT/USER).
-STATIC_CONTROL_TOKEN_CAP = 3150
+# only supported one) to make room for P3/P5. Now equal to budgets.control (3880) - 400 (the room kept for ACTIVE/RECENT/USER).
+# Raised from 3550/3150 for the multilingual rules and examples (+~300 real tokens over origin/main): trimming main's English
+# examples to fit the old cap made general-knowledge questions route to web search (measured: 'how far is the moon').
+# 3880 (+20 for one Hindi example, 56 real tokens) is within the most n_ctx 4096 allows with the 200-token decision (3896), and a real-tokenizer check below keeps it honest.
+STATIC_CONTROL_TOKEN_CAP = 3480
 
 
 def test_static_control_prompt_stays_under_the_token_cap():
@@ -326,3 +330,20 @@ def test_the_flags_ride_on_the_resolution_but_the_route_table_is_unchanged():
     r = resolve(ControlDecision(calls=(call,), needs_live_data=True), by_name)
     assert r.route is Route.TOOLS and not r.advise and not r.also_chat
     assert resolve(ControlDecision(needs_live_data=False, advise=True, also_chat=True), by_name).route is Route.CHAT
+
+
+def test_static_control_prompt_fits_the_budget_in_real_tokens():
+    """The estimator above over-counts English by ~15% and under-counts Hindi/Telugu, so the number that matters is the
+    model's own: the static block plus the 400 tokens kept for ACTIVE/RECENT/USER must fit budgets.control. Skipped when
+    the model file or llama-cpp-python is not on this machine."""
+    import pytest
+    from core.config import load_full_config
+    from core.constants import PROJECT_ROOT
+    model = PROJECT_ROOT / load_full_config().inference.model_path
+    if not model.exists():
+        pytest.skip("model file not present")
+    llama_cpp = pytest.importorskip("llama_cpp")
+    llm = llama_cpp.Llama(model_path=str(model), vocab_only=True, verbose=False)
+    system = _composer().control_stage("x").system
+    real = len(llm.tokenize(system.encode("utf-8"), add_bos=False))
+    assert real + 400 <= PromptBudgets().control, f"static control prompt is {real} real tokens: no room left for history"

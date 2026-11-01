@@ -17,7 +17,9 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-_WORD_RE = re.compile(r"[a-z0-9']+")
+# Any script: an ASCII-only word regex made every Devanagari/Telugu/Japanese transcript
+# look like "symbols only" and the loop dropped it as an artefact.
+_WORD_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)?", re.UNICODE)
 _SOUND_TAG_RE = re.compile(r"\s*[\[\(\*].{0,40}[\]\)\*]\s*")  # "[music]", "(applause)", "*sigh*"
 
 # Stock phrases Whisper emits for noise/silence (training-data artefacts).
@@ -47,7 +49,7 @@ def artifact_reason(text: str, duration_sec: float = 0.0) -> str | None:
     raw = (text or "").strip()
     if not raw:
         return "empty"
-    if not re.search(r"[a-zA-Z]", raw):
+    if not any(char.isalpha() for char in raw):
         return "no letters (symbols or music notes only)"
     if _SOUND_TAG_RE.fullmatch(raw):
         return "sound tag"
@@ -73,3 +75,34 @@ def artifact_reason(text: str, duration_sec: float = 0.0) -> str | None:
     if duration_sec and duration_sec < _SHORT_CLIP_SEC and norm in _SHORT_FILLERS:
         return f"short noise burst heard as {norm!r}"
     return None
+
+
+
+# ---- how sure Whisper is of what it heard ------------------------------------------------------------------------------
+# Whisper reports an average log-probability for the words it kept: about -0.4 for clear speech (measured), -0.8 to -1.2
+# when it is guessing at a mumble, foreign audio or noise. Below UNCLEAR it is cheaper and safer to ask again than to
+# spend a 40+ s tool decision on text that is not what was said; between SHAKY and UNCLEAR the words are used but the
+# previous tool is not inherited (a garbled message "continues" whatever was last asked).
+UNCLEAR_BELOW = -1.0
+SHAKY_BELOW = -0.7
+
+UNCLEAR_REPLIES = {
+    "en": "Sorry, I didn't catch that. Could you say it again?",
+    "hi": "\u092e\u093e\u095e \u0915\u0940\u091c\u093f\u090f, \u092e\u0948\u0902 \u0938\u0941\u0928 \u0928\u0939\u0940\u0902 \u092a\u093e\u0908\u0964 \u0915\u094d\u092f\u093e \u0906\u092a \u0926\u094b\u092c\u093e\u0930\u093e \u092c\u094b\u0932 \u0938\u0915\u0924\u0947 \u0939\u0948\u0902?",
+}
+
+
+def speech_quality(avg_logprob: float | None, unclear_below: float = UNCLEAR_BELOW, shaky_below: float = SHAKY_BELOW) -> str:
+    """"ok" | "shaky" | "unclear" for a transcript's average log-probability (None = not reported = ok)."""
+    if avg_logprob is None:
+        return "ok"
+    if avg_logprob < unclear_below:
+        return "unclear"
+    if avg_logprob < shaky_below:
+        return "shaky"
+    return "ok"
+
+
+def unclear_reply(language: str | None) -> str:
+    """The fixed "say it again" sentence in the transcript's language (English unless Hindi)."""
+    return UNCLEAR_REPLIES.get((language or "en").strip().lower()[:2], UNCLEAR_REPLIES["en"])

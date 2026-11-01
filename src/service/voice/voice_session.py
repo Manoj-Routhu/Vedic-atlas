@@ -34,18 +34,24 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
-from core.filler import FILLER_PHRASES, FILLER_STILL_PHRASES, PhrasePicker
-from core.logging_config import logger, reset_voice_turn_id, set_voice_turn_id
+from core.filler import (
+    FILLER_PHRASES, FILLER_STILL_PHRASES, HINDI_FILLER_PHRASES, HINDI_FILLER_STILL_PHRASES, PhrasePicker,
+)
+from core.logging_config import logger, log_text, reset_voice_turn_id, set_voice_turn_id
 from domain.entities.agent_context import AgentContext
 from domain.entities.utterance import Utterance
-from domain.policies.transcript_policy import artifact_reason
+from domain.policies.language_policy import language_of, voice_language
+from domain.policies.transcript_policy import SHAKY_BELOW, UNCLEAR_BELOW, artifact_reason, speech_quality, unclear_reply
 from domain.ports.audio_capture_port import AudioCapturePort
 from domain.ports.stt_port import STTPort
 from domain.ports.tts_port import TTSPort
 from service.voice.utterance_collector import UtteranceCollector
 
-_WORD_RE = re.compile(r"[a-z0-9']+")
-_SENTENCE_END_RE = re.compile(r"[.!?]+(?=\s)")
+_WORD_RE = re.compile(r"[a-z0-9'\u0900-\u0963\u0966-\u097f]+")   # Latin and Devanagari words (not the danda)
+# Sentence ends: Latin . ! ?  + Devanagari danda/double danda (U+0964/5), which Hindi uses instead of a full stop, and the
+# full-width Japanese/Chinese marks, which are NOT followed by a space. Without them a Hindi/Japanese reply is never split
+# and nothing is spoken until the whole reply is generated.
+_SENTENCE_END_RE = re.compile(r"(?:[.!?]+(?=\s))|(?:[।॥。！？]+)")
 _WAKE_ACKNOWLEDGEMENT = "Hey there, what's up?"
 _FILLER_FIRST_DELAY_SEC = 1.0
 _FILLER_REPEAT_SEC = 7.0
@@ -84,12 +90,16 @@ class VoiceSession:
         wake_cooldown_sec: float = 1.0,
         filler_phrases: tuple[str, ...] | list[str] = FILLER_PHRASES,
         filler_still_phrases: tuple[str, ...] | list[str] = FILLER_STILL_PHRASES,
+        filler_phrases_hi: tuple[str, ...] | list[str] = HINDI_FILLER_PHRASES,
+        filler_still_phrases_hi: tuple[str, ...] | list[str] = HINDI_FILLER_STILL_PHRASES,
         filler_first_delay_sec: float = _FILLER_FIRST_DELAY_SEC,
         filler_repeat_sec: float = _FILLER_REPEAT_SEC,
         filler_max_count: int = _FILLER_MAX_COUNT,
         speaker_id: Any | None = None,
         require_known_speaker: bool = False,
         speaker_match_threshold: float = 0.6,
+        unclear_below: float = UNCLEAR_BELOW,
+        shaky_below: float = SHAKY_BELOW,
         on_event: Callable[[dict], None] | None = None,
     ):
         self._audio = audio
@@ -100,6 +110,8 @@ class VoiceSession:
         self._supervisor = supervisor
         self._gate = capture_gate
         self._min_chars = min_chars
+        self._unclear_below = unclear_below
+        self._shaky_below = shaky_below
         self._speak_replies = speak_replies
         self._speak_timeout_sec = speak_timeout_sec
         self._post_speak_settle_sec = post_speak_settle_sec
@@ -159,7 +171,10 @@ class VoiceSession:
         self._filler_first_delay_sec = filler_first_delay_sec
         self._filler_repeat_sec = filler_repeat_sec
         self._filler_max_count = filler_max_count
-        self._filler_pcm: dict[str, bytes] = {}
+        self._filler_phrases_hi = list(filler_phrases_hi)
+        self._filler_still_phrases_hi = list(filler_still_phrases_hi) or list(filler_phrases_hi)
+        # (voice language, phrase) -> (pcm, sample rate it was made at): Piper voices can differ in rate.
+        self._filler_pcm: dict[tuple[str | None, str], tuple[bytes, int]] = {}
         self._turn_fillers: list[str] = []   # said this turn, so the echo guard knows them
 
     # -- Lifecycle --------------------------------------------------------
@@ -192,32 +207,41 @@ class VoiceSession:
 
     async def _warm_output(self) -> None:
         """Load the TTS voice and open the speaker stream now, not on the first reply. Both optional on the adapter."""
+        # Separate try blocks: a voice that fails to warm must not also skip opening the speaker stream.
         try:
             warm = getattr(self._tts, "warmup", None)
             if callable(warm):
                 started = time.perf_counter()
                 await asyncio.to_thread(warm)
                 logger.info(f"[voice] TTS voice loaded in {(time.perf_counter() - started) * 1000:.0f} ms")
+        except Exception as e:
+            logger.warning(f"[voice] TTS warmup skipped: {e}")
+        try:
             keep_open = getattr(self._speaker, "keep_open", None)
             if callable(keep_open):
                 await asyncio.to_thread(keep_open, self._tts.sample_rate)
             await self._render_fillers()
         except Exception as e:
-            logger.warning(f"[voice] output warmup skipped: {e}")
+            logger.warning(f"[voice] speaker pre-open skipped: {e}")
 
     async def _render_fillers(self) -> None:
-        """Synthesize every filler phrase once and keep the audio (about 1 MB in all)."""
+        """Synthesize every filler phrase once and keep the audio (about 1 MB in all). English with the default voice,
+        Hindi with the Hindi voice (loaded here, so the first Hindi turn does not wait for it)."""
         if self._tts is None:
             return
         started = time.perf_counter()
-        for phrase in dict.fromkeys([*self._filler_phrases, *self._filler_still_phrases]):
-            try:
-                async with self._speech_lock:
-                    pcm = b"".join([chunk async for chunk in self._tts.synthesize(phrase) if chunk])
-                if pcm:
-                    self._filler_pcm[phrase] = pcm
-            except Exception as e:
-                logger.warning(f"[voice] could not pre-render filler {phrase!r}: {e}")
+        sets = [(None, [*self._filler_phrases, *self._filler_still_phrases]),
+                ("Hindi", [*self._filler_phrases_hi, *self._filler_still_phrases_hi])]
+        for voice, phrases in sets:
+            for phrase in dict.fromkeys(phrases):
+                try:
+                    async with self._speech_lock:
+                        pcm = b"".join([chunk async for chunk in self._tts.synthesize(phrase, voice=voice) if chunk])
+                        rate = self._tts.sample_rate   # read right after synthesis: it follows the voice just used
+                    if pcm:
+                        self._filler_pcm[(voice, phrase)] = (pcm, rate)
+                except Exception as e:
+                    logger.warning(f"[voice] could not pre-render filler {phrase!r}: {e}")
         logger.info(
             f"[voice] {len(self._filler_pcm)} filler phrases ready in {(time.perf_counter() - started) * 1000:.0f} ms"
         )
@@ -267,7 +291,16 @@ class VoiceSession:
             "armed": self._is_armed(),
             "speaker_id_enabled": self._speaker_id is not None,
             "require_known_speaker": self._require_known_speaker,
+            "stt_language": getattr(self._stt, "current_language", "?"),
         }
+
+    def set_stt_language(self, language: str) -> str:
+        """Pin the STT language ("en", "hi", ...) or "auto" for detection + sticky, at runtime."""
+        setter = getattr(self._stt, "set_language", None)
+        if not callable(setter):
+            raise ValueError("the configured STT backend has no language switch")
+        setter(language)
+        return getattr(self._stt, "current_language", language)
 
     # -- Loop -------------------------------------------------------------
 
@@ -763,8 +796,22 @@ class VoiceSession:
         # that is not something the user said, so it must not become a turn.
         reason = artifact_reason(text, utterance.duration_sec)
         if reason is not None:
-            logger.info(f"[voice] dropping probable STT artefact ({reason}): {text[:80]!r}")
+            logger.info(f"[voice] dropping probable STT artefact ({reason}): {log_text(text, 80)}")
             self._emit("artifact_ignored", {"reason": reason})
+            return
+
+        # Whisper is guessing (a mumble, foreign audio, noise): asking again costs a few seconds, acting on the guess costs a
+        # 40+ s tool decision and often a wrong answer. No model call, no tool.
+        quality = speech_quality(transcript.avg_logprob, self._unclear_below, self._shaky_below)
+        if quality == "unclear":
+            reply = unclear_reply(transcript.language)
+            logger.info(
+                f"[voice] unclear speech (avg_logprob={transcript.avg_logprob:.2f} < {self._unclear_below}): "
+                f"asking to repeat; heard {log_text(text, 60)}"
+            )
+            self._emit("unclear", {"avg_logprob": round(transcript.avg_logprob, 2), "heard": text})
+            self._last_reply = reply            # so the echo guard does not mistake our own question for the user
+            await self._speak(reply, language=voice_language(reply, "Hindi" if (transcript.language or "").startswith("hi") else None))
             return
 
         # Resolve who (if anyone enrolled) said this, then clear the running
@@ -783,15 +830,19 @@ class VoiceSession:
         # words back in. If what we just "heard" is essentially what we just
         # said, it isn't a user turn.
         if self._echo_guard and self._is_echo(text):
-            logger.warning(f"[voice] ignoring probable self-echo: {text[:60]!r}")
+            logger.warning(f"[voice] ignoring probable self-echo: {log_text(text, 60)}")
             self._emit("echo_ignored", {"text": text})
             return
 
         self._last_transcript = text
-        logger.info(f"[voice] heard: {text!r}")
+        logger.info(f"[voice] heard: {log_text(text)}")
         self._emit("transcript", {"text": text})
 
         ctx = AgentContext(user_message=text, from_voice=True)
+        if transcript.avg_logprob is not None:
+            ctx.metadata["stt_avg_logprob"] = round(transcript.avg_logprob, 2)
+        if quality == "shaky":
+            ctx.metadata["stt_shaky"] = True      # the decider will not inherit the previous tool for this turn
         if speaker_name:
             ctx.metadata["speaker_name"] = speaker_name
         if self._speak_replies and self._tts is not None:
@@ -816,7 +867,7 @@ class VoiceSession:
             f"elapsed_ms={(time.perf_counter() - turn_started) * 1000:.0f} "
             f"reply_chars={len(reply)}"
         )
-        logger.info(f"[voice] reply: {reply[:120]!r}")
+        logger.info(f"[voice] reply: {log_text(reply, 120)}")
         self._emit("reply", {"text": reply})
 
     def _is_echo(self, heard: str) -> bool:
@@ -853,12 +904,12 @@ class VoiceSession:
         await self._speak(text)
         return True
 
-    async def _speak(self, text: str) -> None:
+    async def _speak(self, text: str, language: str | None = None) -> None:
         """Synthesise and play with the mic held closed until playback truly ends."""
         self._speaking = True
         self._emit("speaking", {"text": text})
         try:
-            spoke, _ = await self._say_pcm(text)
+            spoke, _ = await self._say_pcm(text, language=language)
             if spoke:
                 await self._wait_playback()
         except Exception as e:
@@ -886,7 +937,9 @@ class VoiceSession:
         stream_finished_ms: float | None = None
         reply_audio_started = asyncio.Event()
         self._turn_fillers = []
-        filler_task = asyncio.create_task(self._speak_fillers(reply_audio_started))
+        filler_task = asyncio.create_task(
+            self._speak_fillers(reply_audio_started, "Hindi" if language_of(ctx.user_message) == "Hindi" else None)
+        )
         try:
             async for chunk in self._supervisor.execute_stream(ctx, cancel_event=cancel):
                 if not chunk:
@@ -903,13 +956,13 @@ class VoiceSession:
                 sentence, buffer = self._pop_sentence(buffer)
                 while sentence:
                     reply_audio_started.set()
-                    spoke, _ = await self._say_pcm(sentence, timing)
+                    spoke, _ = await self._say_pcm(sentence, timing, language=voice_language(sentence, ctx.metadata.get("language")))
                     spoke_anything = spoke or spoke_anything
                     sentence, buffer = self._pop_sentence(buffer)
             tail = buffer.strip()
             if tail:
                 reply_audio_started.set()
-                spoke, _ = await self._say_pcm(tail, timing)
+                spoke, _ = await self._say_pcm(tail, timing, language=voice_language(tail, ctx.metadata.get("language")))
                 spoke_anything = spoke or spoke_anything
             stream_finished_ms = (time.perf_counter() - stream_started) * 1000
             if spoke_anything:
@@ -940,14 +993,16 @@ class VoiceSession:
             await self._after_speaking()
         return "".join(parts).strip()
 
-    async def _speak_fillers(self, reply_started: asyncio.Event) -> None:
+    async def _speak_fillers(self, reply_started: asyncio.Event, language: str | None = None) -> None:
         """While the model works, say a short random phrase after a moment, then now and then if the wait goes on.
 
         Stops the moment the reply starts. A phrase already playing finishes first, because the reply waits on the
-        speech lock. The phrases are never the same twice in a row.
+        speech lock. The phrases are never the same twice in a row. `language` "Hindi" (the user spoke Devanagari) picks
+        Hindi phrases and the Hindi voice; anything else the English ones.
         """
-        first = PhrasePicker(self._filler_phrases)
-        later = PhrasePicker(self._filler_still_phrases)
+        hindi = language == "Hindi"
+        first = PhrasePicker(self._filler_phrases_hi if hindi else self._filler_phrases)
+        later = PhrasePicker(self._filler_still_phrases_hi if hindi else self._filler_still_phrases)
         try:
             for count in range(self._filler_max_count):
                 delay = self._filler_first_delay_sec if count == 0 else self._filler_repeat_sec
@@ -964,12 +1019,12 @@ class VoiceSession:
                         return
                     self._turn_fillers.append(phrase)
                     logger.info(f"[voice][flow] stage=filler n={count + 1} text={phrase!r}")
-                    pcm = self._filler_pcm.get(phrase)
-                    if pcm:
-                        self._speaker.play_pcm(pcm, self._tts.sample_rate)
+                    cached = self._filler_pcm.get((language, phrase))
+                    if cached:
+                        self._speaker.play_pcm(cached[0], cached[1])
                         spoke = True
                     else:   # not rendered yet (still booting) or its render failed: say it the slow way
-                        spoke, _ = await self._synthesize_pcm(phrase)
+                        spoke, _ = await self._synthesize_pcm(phrase, language=language)
                     if spoke:
                         await self._wait_playback()
         except asyncio.CancelledError:
@@ -985,16 +1040,18 @@ class VoiceSession:
         cut = match.end()
         return buffer[:cut].strip(), buffer[cut:]
 
-    async def _say_pcm(self, text: str, timing: dict | None = None) -> tuple[bool, float]:
+    async def _say_pcm(self, text: str, timing: dict | None = None, language: str | None = None) -> tuple[bool, float]:
         async with self._speech_lock:
-            return await self._synthesize_pcm(text, timing)
+            return await self._synthesize_pcm(text, timing, language=language)
 
-    async def _synthesize_pcm(self, text: str, timing: dict | None = None) -> tuple[bool, float]:
+    async def _synthesize_pcm(
+        self, text: str, timing: dict | None = None, language: str | None = None
+    ) -> tuple[bool, float]:
         started = time.perf_counter()
         spoke = False
         audio_bytes = 0
         logger.info(f"[voice][flow] stage=tts_synthesis_started chars={len(text)}")
-        async for pcm in self._tts.synthesize(text):
+        async for pcm in self._tts.synthesize(text, voice=language):
             if pcm:
                 self._speaker.play_pcm(pcm, self._tts.sample_rate)
                 spoke = True
