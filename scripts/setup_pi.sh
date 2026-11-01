@@ -96,7 +96,8 @@ OWW_FEATURE_URL="https://github.com/dscripka/openWakeWord/releases/download/v0.5
 OWW_FEATURE_FILES=(melspectrogram.onnx embedding_model.onnx)
 
 APT_PACKAGES=(build-essential cmake git wget curl ca-certificates pkg-config
-              python3-dev python3-venv libportaudio2 portaudio19-dev alsa-utils mpv bluez)
+              python3-dev python3-venv libportaudio2 portaudio19-dev alsa-utils mpv bluez
+              swig liblgpio-dev)   # swig + liblgpio-dev: pip builds lgpio (for the GPIO mute switch) from source, no aarch64 wheel
 
 MIN_DISK_GB=8        # llama-cpp-python build + venv + up to 2.7 GB of models
 MIN_RAM_MB=3500      # set per model by select_model() (rough: model file + context + speech/memory models)
