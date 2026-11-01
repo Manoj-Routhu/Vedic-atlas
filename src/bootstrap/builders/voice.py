@@ -75,6 +75,7 @@ def build_voice_session(cfg: AppConfig, *, audio, capture_gate, supervisor, even
         wake_word=wake,
         wake_engine=cfg.audio.wake_engine,
         wake_window_sec=cfg.audio.wake_window_sec,
+        wake_cooldown_sec=cfg.audio.wake_cooldown_sec,
         speaker_id=speaker_id,
         require_known_speaker=cfg.audio.speaker_id.require_known_speaker,
         speaker_match_threshold=cfg.audio.speaker_id.match_threshold,

@@ -221,6 +221,9 @@ class AudioConfig(BaseModel):
     wake_oww_model: str = "hey_veda"
     wake_oww_model_path: str = "data/models/openwakeword/hey_veda.onnx"
     wake_threshold: float = 0.5
+    # After Veda speaks, wake hits are ignored for this long (and the detector's audio window is wiped), so the
+    # "Hey Veda" that woke it, or its own "what's up", cannot wake it again in a loop. 0 turns the cooldown off.
+    wake_cooldown_sec: float = Field(default=1.0, ge=0.0, le=10.0)
     daemon_trigger: str = "auto"  # "auto" | "wake_word" | "hotkey"
     hotkey: str = "<f8>"
 
