@@ -22,7 +22,7 @@ def call(tool, **args):
 
 def sample(user="weather in nagpur", calls=None, live=None, clar=None, **kw):
     calls = [call("get_weather", place="Nagpur")] if calls is None else calls
-    label = {"needs_live_data": bool(calls) or bool(live), "calls": calls}
+    label = {"language": "English", "needs_live_data": bool(calls) or bool(live), "calls": calls}
     if clar:
         label["clarification"], label["needs_live_data"] = clar, False
     return Sample(id=kw.pop("id", "t1"), category=kw.pop("category", "explicit"), user=user, label=label, **kw)
@@ -36,17 +36,17 @@ def errors(s):
 
 def test_label_is_compact_json_in_the_grammars_key_order():
     label = {"calls": [call("get_weather", place="Nagpur")], "needs_live_data": True}                 # keys given in the wrong order
-    assert canonical_label(label) == '{"needs_live_data":true,"calls":[{"tool":"get_weather","args":{"place":"Nagpur"}}]}'
+    assert canonical_label(label) == '{"needs_live_data":true,"calls":[{"tool":"get_weather","args":{"place":"Nagpur"}}],"language":"English"}'
 
 
 def test_arguments_follow_the_manifest_order_and_none_is_dropped():
     out = canonical_label({"needs_live_data": True, "calls": [call("calendar_create", time="10:00", title="Kickoff", date_offset=1, duration_minutes=None)]})
-    assert out == '{"needs_live_data":true,"calls":[{"tool":"calendar_create","args":{"title":"Kickoff","date_offset":1,"time":"10:00"}}]}'
+    assert out == '{"needs_live_data":true,"calls":[{"tool":"calendar_create","args":{"title":"Kickoff","date_offset":1,"time":"10:00"}}],"language":"English"}'
 
 
 def test_a_clarification_is_written_last_and_only_when_present():
-    assert canonical_label({"needs_live_data": False, "calls": [], "clarification": "Which one?"}) == '{"needs_live_data":false,"calls":[],"clarification":"Which one?"}'
-    assert canonical_label({"needs_live_data": False, "calls": []}) == '{"needs_live_data":false,"calls":[]}'
+    assert canonical_label({"needs_live_data": False, "calls": [], "clarification": "Which one?"}) == '{"needs_live_data":false,"calls":[],"language":"English","clarification":"Which one?"}'
+    assert canonical_label({"needs_live_data": False, "calls": []}) == '{"needs_live_data":false,"calls":[],"language":"English"}'
 
 
 def test_non_ascii_is_kept_as_text_not_escaped():

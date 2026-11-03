@@ -70,7 +70,7 @@ def validate(sample: Sample) -> list[Issue]:
     label, user = sample.label, sample.user
     if not isinstance(label, dict) or not isinstance(label.get("needs_live_data"), bool) or not isinstance(label.get("calls"), list):
         return [Issue("error", "shape", "label needs a boolean needs_live_data and a list calls")]
-    unknown = set(label) - {"needs_live_data", "calls", "clarification"}
+    unknown = set(label) - {"needs_live_data", "calls", "clarification", "language", "advise", "also_chat"}
     if unknown:
         err("shape", f"unexpected label keys {sorted(unknown)}")
     if not (user or "").strip() or len(user) > 500:
@@ -86,6 +86,13 @@ def validate(sample: Sample) -> list[Issue]:
         return issues + [Issue("error", "tools", f"unknown tool in the visible set {sample.tools}")]
 
     calls, live, clar = label["calls"], label["needs_live_data"], label.get("clarification")
+    language, advise, also_chat = label.get("language"), label.get("advise", False), label.get("also_chat", False)
+    if not isinstance(language, str) or not language.strip() or len(language) > 24:
+        warn("language", "missing/invalid language; render defaults to English")
+    if not isinstance(advise, bool) or not isinstance(also_chat, bool):
+        err("flags", "advise and also_chat must be booleans when present")
+    if (advise or also_chat) and not calls:
+        err("flags", "advise/also_chat only make sense on a tool-call turn")
     if len(calls) > MAX_CALLS:
         err("calls", f"more than {MAX_CALLS} calls")
     if calls and not live:
@@ -147,7 +154,10 @@ def validate(sample: Sample) -> list[Issue]:
 
     if not issues or all(i.level == "warn" for i in issues):
         # the serving policy has the last word: a label it would veto or reroute is wrong
-        decision = ControlDecision(calls=tuple(calls), needs_live_data=live, clarification=clar)
+        decision = ControlDecision(
+            calls=tuple(calls), needs_live_data=live, clarification=clar,
+            language=language, advise=bool(advise), also_chat=bool(also_chat),
+        )
         route = resolve(decision, tools, user_message=user).route
         if route is not _expected_route(label):
             err("policy", f"serving would route this as {route.value}, the label intends {_expected_route(label).value}")

@@ -64,7 +64,16 @@ def canonical_label(label: dict, tools: dict[str, ToolManifest] | None = None) -
         order = [p.name for p in tools[call["tool"]].params]
         args = call.get("args") or {}
         calls.append({"tool": call["tool"], "args": {k: args[k] for k in order if k in args and args[k] is not None}})
-    data: dict = {"needs_live_data": bool(label["needs_live_data"]), "calls": calls}
+    data: dict = {
+        "needs_live_data": bool(label["needs_live_data"]),
+        "calls": calls,
+        # The serving grammar requires `language`; old pilot labels predate it and default to English.
+        "language": label.get("language") or "English",
+    }
+    if label.get("advise"):
+        data["advise"] = True
+    if label.get("also_chat"):
+        data["also_chat"] = True
     clarification = label.get("clarification")
     if clarification:
         data["clarification"] = clarification

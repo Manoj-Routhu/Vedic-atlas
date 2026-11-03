@@ -37,7 +37,7 @@ from training.validate import validate  # noqa: E402
 
 EVAL_FILES = [ROOT / "tests" / "eval" / f"orchestrator_{n}.yaml" for n in ("golden", "heldout", "edge")]
 TOKENIZER_GGUF = ROOT / "data" / "Qwen3-4B-Q4_K_M.gguf"      # every Qwen3 size shares this tokenizer
-_NORM = re.compile(r"[^a-z0-9 ]")
+_NORM = re.compile(r"[^\w ]", re.UNICODE)
 
 
 def norm(text: str) -> str:
