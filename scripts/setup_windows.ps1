@@ -229,7 +229,7 @@ function Setup-Models {
     # The same Piper voices as the Pi (config/audio.yaml tts_engine: piper). Windows speech has English voices only and says
     # nothing for Hindi.
     $pv = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
-    foreach ($v in @("en/en_US/lessac/medium/en_US-lessac-medium", "hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium")) {
+    foreach ($v in @("en/en_US/hfc_female/medium/en_US-hfc_female-medium", "hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium")) {
         $leaf = Split-Path $v -Leaf
         Info "voice (Piper $leaf)"
         Fetch "$pv/$v.onnx" (Join-Path $Root "data\models\piper\$leaf.onnx")

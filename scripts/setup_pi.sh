@@ -19,7 +19,7 @@
 #   4. downloads the models with wget, resumable    (skip: --skip-models)
 #        - language model   data/Qwen3-<size>-Q4_K_M.gguf      (--model: 0.6b ~0.4 GB, 1.7b ~1.1 GB, 4b ~2.5 GB)
 #        - speech-to-text   data/models/whisper-base.en/       (faster-whisper base.en, 145 MB)
-#        - voice            data/models/piper/<voice>.onnx     (Piper en_US-lessac-medium, 63 MB)
+#        - voice            data/models/piper/<voice>.onnx     (Piper en_US-hfc_female-medium, 63 MB)
 #        - memory           data/bge-small-en-v1.5/            (BGE-small embeddings, 134 MB: lets Veda recall
 #                                                               things you told it in earlier sessions)
 #        - wake helpers     inside the openwakeword package   (melspectrogram + embedding models, 2.4 MB: the
@@ -71,7 +71,7 @@ WHISPER_SMALL_URL="https://huggingface.co/Systran/faster-whisper-small/resolve/m
 WHISPER_SMALL_DIR="$ROOT/data/models/whisper-small"
 
 PIPER_BASE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main"
-PIPER_VOICE="${PIPER_VOICE:-en_US-lessac-medium}"
+PIPER_VOICE="${PIPER_VOICE:-en_US-hfc_female-medium}"
 # Voices for the other supported languages (space separated; set PIPER_EXTRA_VOICES="" to skip). Without it a Hindi
 # reply is read with the English voice, which cannot pronounce it.
 PIPER_EXTRA_VOICES="${PIPER_EXTRA_VOICES-hi_IN-priyamvada-medium}"

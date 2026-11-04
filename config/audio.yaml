@@ -36,9 +36,9 @@ noise_suppression_strength: 0.75  # 0 = off, 1 = strongest; targets steady fan/h
 # pick Windows speech (pyttsx3) on a Windows laptop, which has English voices only and says nothing for Hindi.
 tts_engine: piper
 tts_voice: zira                       # pyttsx3 fallback hint only
-tts_model_path: data/models/piper/en_US-lessac-medium.onnx
+tts_model_path: data/models/piper/en_US-hfc_female-medium.onnx
 tts_voice_map:
-  en: data/models/piper/en_US-lessac-medium.onnx
+  en: data/models/piper/en_US-hfc_female-medium.onnx
   hi: data/models/piper/hi_IN-priyamvada-medium.onnx
 
 mic_device_index: 1         # set explicitly after running sounddevice.query_devices()
