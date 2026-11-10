@@ -1,7 +1,7 @@
 /**
  * Cuts a streamed reply into sentences so speech can start as soon as the first one is complete, not after the whole answer.
  *
- * A sentence ends at . ! ? or an ellipsis, optionally followed by closing quotes or brackets, and only once the NEXT character
+ * A sentence ends at . ! ? an ellipsis or a Hindi danda (। ॥), optionally followed by closing quotes or brackets, and only once the NEXT character
  * proves it (whitespace), so "12.5 percent" and "version 2.0" are not cut and a full stop that is still arriving is not
  * mistaken for the end. Common abbreviations ("Mr.", "e.g.") do not end a sentence. A very long run with no punctuation is
  * cut at a space so a rambling reply cannot keep the listener waiting. `flush()` returns whatever is left at the end.
@@ -80,7 +80,7 @@ export class SentenceSplitter {
 
   private isTerminator(i: number): boolean {
     const c = this.buffer[i];
-    return c === '.' || c === '!' || c === '?' || c === '…';
+    return c === '.' || c === '!' || c === '?' || c === '…' || c === '।' || c === '॥'; // + Hindi danda and double danda
   }
 
   private isAbbreviation(from: number, dot: number): boolean {

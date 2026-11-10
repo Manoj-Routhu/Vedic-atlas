@@ -4,6 +4,8 @@ Status: **built through Stage 7 and verified on a real Android phone over home W
 (vision backend, pairing, permissions). Everything this app calls already exists and is tested; section 6 lists each
 route and what the app does with each response.
 
+Update 2026-11-10: Chat and Music can now listen and speak Hindi (Settings > Language; Look stays English), the Veda chat shows the Pi's "working on it" fillers, and Music can be jumped around in. See `mobile-app/18-chat-fillers-and-music-seek-design.md`. Built and tested in code, not yet tried on a phone.
+
 Decisions already made: **Android only** for v1 · **Expo (React Native)** in `mobile/` · **English only** in v1 ·
 speech-to-text and text-to-speech run **on the phone** · the phone talks to the Pi over the home Wi-Fi, never the internet.
 

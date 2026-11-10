@@ -17,9 +17,10 @@ class MusicStatus:
 
     state: str
     title: str | None = None
-    elapsed_s: float | None = None     # seconds actually played (a pause does not count); None unless playing or paused
+    elapsed_s: float | None = None     # where in the song we are (a pause stops it, a seek moves it); None unless playing or paused
     limit_s: float | None = None       # the song stops by itself when elapsed_s reaches this
     duration_s: float | None = None    # the song's own length, when known
+    seekable: bool = False             # the phone may jump to another place in the song (needs a known length)
 
 
 @dataclass(frozen=True)

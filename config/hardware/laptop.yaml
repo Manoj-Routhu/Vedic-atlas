@@ -4,6 +4,8 @@ inference:
   # generate 37-43% faster. NOT for the Pi: its own profile found no gain beyond llama.cpp's default there.
   n_threads: 8
   # prompt_cache_mb is deliberately NOT raised here: the Pi cannot go above 768 MB, so the laptop uses the same 768 and behaves like it.
+devices:
+  lan_enabled: true         # `veda` and `veda --restart` listen on the home network, so a paired phone can reach this laptop (tokens still gate every route)
 vision:
   binary_path: data/tools/llama-b11716-win-cpu-x64/llama-server.exe
   n_threads: 6

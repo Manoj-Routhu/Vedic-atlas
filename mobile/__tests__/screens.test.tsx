@@ -7,6 +7,8 @@ import { connectionStore, type ConnectionState } from '../src/state/connection';
 const mockRouter = { push: jest.fn(), replace: jest.fn(), back: jest.fn() };
 jest.mock('expo-router', () => ({ useRouter: () => mockRouter }));
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
+jest.mock('expo-speech-recognition', () => ({ ExpoSpeechRecognitionModule: {} }));
+jest.mock('expo-speech', () => ({ speak: jest.fn(), stop: jest.fn(async () => {}) }));
 
 let mockPermission: { granted: boolean; canAskAgain: boolean } | null = null;
 const mockRequestPermission = jest.fn();

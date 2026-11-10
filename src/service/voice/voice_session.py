@@ -34,9 +34,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
-from core.filler import (
-    FILLER_PHRASES, FILLER_STILL_PHRASES, HINDI_FILLER_PHRASES, HINDI_FILLER_STILL_PHRASES, PhrasePicker,
-)
+from core.filler import FILLER_PHRASES, FILLER_STILL_PHRASES, HINDI_FILLER_PHRASES, HINDI_FILLER_STILL_PHRASES
 from core.logging_config import logger, log_text, reset_voice_turn_id, set_voice_turn_id
 from domain.entities.agent_context import AgentContext
 from domain.entities.utterance import Utterance
@@ -45,6 +43,7 @@ from domain.policies.transcript_policy import SHAKY_BELOW, UNCLEAR_BELOW, artifa
 from domain.ports.audio_capture_port import AudioCapturePort
 from domain.ports.stt_port import STTPort
 from domain.ports.tts_port import TTSPort
+from service.agent.filler_schedule import filler_phrases
 from service.voice.utterance_collector import UtteranceCollector
 
 _WORD_RE = re.compile(r"[a-z0-9'\u0900-\u0963\u0966-\u097f]+")   # Latin and Devanagari words (not the danda)
@@ -1001,24 +1000,21 @@ class VoiceSession:
         Hindi phrases and the Hindi voice; anything else the English ones.
         """
         hindi = language == "Hindi"
-        first = PhrasePicker(self._filler_phrases_hi if hindi else self._filler_phrases)
-        later = PhrasePicker(self._filler_still_phrases_hi if hindi else self._filler_still_phrases)
+        first = self._filler_phrases_hi if hindi else self._filler_phrases
+        later = self._filler_still_phrases_hi if hindi else self._filler_still_phrases
+        schedule = filler_phrases(
+            reply_started, first=first, later=later, first_delay_sec=self._filler_first_delay_sec,
+            repeat_sec=self._filler_repeat_sec, max_count=self._filler_max_count,
+        )
         try:
-            for count in range(self._filler_max_count):
-                delay = self._filler_first_delay_sec if count == 0 else self._filler_repeat_sec
-                try:
-                    await asyncio.wait_for(reply_started.wait(), timeout=delay)
-                    return   # the reply began first
-                except asyncio.TimeoutError:
-                    pass
-                phrase = (first if count == 0 else later).pick()
-                if not phrase:
-                    return
+            count = 0
+            async for phrase in schedule:
+                count += 1
                 async with self._speech_lock:
                     if reply_started.is_set():
                         return
                     self._turn_fillers.append(phrase)
-                    logger.info(f"[voice][flow] stage=filler n={count + 1} text={phrase!r}")
+                    logger.info(f"[voice][flow] stage=filler n={count} text={phrase!r}")
                     cached = self._filler_pcm.get((language, phrase))
                     if cached:
                         self._speaker.play_pcm(cached[0], cached[1])

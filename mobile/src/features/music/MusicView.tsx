@@ -7,6 +7,7 @@ import { Banner } from '../../ui/Banner';
 import { Button } from '../../ui/Button';
 import { GearButton } from '../../ui/GearButton';
 import { Icon, type IconName } from '../../ui/Icon';
+import { Scrubber } from '../../ui/Scrubber';
 import { colors, font, radius, spacing, touch } from '../../ui/theme';
 import { elapsedNow, type MusicStore } from './musicStore';
 
@@ -19,6 +20,9 @@ type Props = {
 
 /** A press shorter than this is a tap (start listening, tap again to stop); longer is hold-to-talk (let go to play). */
 export const HOLD_MS = 450;
+
+/** How far the back and forward buttons jump, and the bar's step for TalkBack. */
+export const SKIP_SECONDS = 10;
 
 /** 170 seconds -> "2:50". */
 export function clock(seconds: number): string {
@@ -47,6 +51,7 @@ export function MusicView({ store, onSettings, micAvailable = false }: Props) {
   const [draft, setDraft] = useState('');
   const [picking, setPicking] = useState(false);
   const [tick, setTick] = useState(() => Date.now());
+  const [preview, setPreview] = useState<number | null>(null); // the place the finger is over while dragging the bar
   const pressedAt = useRef(0);
   const info = s.info;
   const state = info?.state ?? 'idle';
@@ -154,7 +159,7 @@ export function MusicView({ store, onSettings, micAvailable = false }: Props) {
       </View>
     );
   } else if (active) {
-    const elapsed = elapsedNow(s, tick) ?? 0;
+    const elapsed = preview ?? s.seekTarget ?? elapsedNow(s, tick) ?? 0;
     const limit = info.limitS;
     const total = limit !== null ? (info.durationS !== null ? Math.min(info.durationS, limit) : limit) : null;
     const ends = limit !== null && info.durationS !== null && info.durationS < limit ? `Ends at ${clock(info.durationS)}` : limit !== null ? `Stops by itself at ${clock(limit)}` : '';
@@ -175,15 +180,32 @@ export function MusicView({ store, onSettings, micAvailable = false }: Props) {
           </View>
           {total !== null ? (
             <View style={styles.progressWrap}>
-              <View
-                style={styles.track}
-                accessible
-                accessibilityRole="progressbar"
-                accessibilityLabel="Time until the song stops by itself"
-                accessibilityValue={{ min: 0, max: Math.round(total), now: Math.round(Math.min(elapsed, total)) }}
-              >
-                <View style={[styles.fill, { width: `${Math.min(100, (elapsed / total) * 100)}%` }]} />
-              </View>
+              {info.seekable ? (
+                <Scrubber
+                  testID="music-scrubber"
+                  value={Math.min(elapsed, total)}
+                  max={total}
+                  step={SKIP_SECONDS}
+                  label="Position in the song"
+                  describe={(v) => `${clock(v)} of ${clock(total)}`}
+                  onPreview={setPreview}
+                  onCommit={(v) => {
+                    setPreview(null);
+                    s.seekTo(v);
+                  }}
+                  disabled={s.busy}
+                />
+              ) : (
+                <View
+                  style={styles.track}
+                  accessible
+                  accessibilityRole="progressbar"
+                  accessibilityLabel="Time until the song stops by itself"
+                  accessibilityValue={{ min: 0, max: Math.round(total), now: Math.round(Math.min(elapsed, total)) }}
+                >
+                  <View style={[styles.fill, { width: `${Math.min(100, (elapsed / total) * 100)}%` }]} />
+                </View>
+              )}
               <View style={styles.timeRow}>
                 <Text style={styles.time}>{clock(elapsed)}</Text>
                 <Text style={styles.time}>{ends}</Text>
@@ -191,6 +213,21 @@ export function MusicView({ store, onSettings, micAvailable = false }: Props) {
             </View>
           ) : null}
         </View>
+
+        {info.seekable ? (
+          <View style={styles.skipRow}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Back ${SKIP_SECONDS} seconds`} onPress={() => s.skip(-SKIP_SECONDS)} style={styles.skip}>
+              <Icon name="rewind" size={22} color={colors.text} />
+              <Text style={styles.skipText}>{`${SKIP_SECONDS} s`}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Forward ${SKIP_SECONDS} seconds`} onPress={() => s.skip(SKIP_SECONDS)} style={styles.skip}>
+              <Text style={styles.skipText}>{`${SKIP_SECONDS} s`}</Text>
+              <Icon name="fast-forward" size={22} color={colors.text} />
+            </Pressable>
+          </View>
+        ) : info.durationS === null ? (
+          <Text testID="not-seekable" style={styles.skipNote}>{"This one can't be skipped through, because its length isn't known."}</Text>
+        ) : null}
 
         <View style={styles.controls}>
           <View style={styles.control}>
@@ -330,6 +367,10 @@ const styles = StyleSheet.create({
   fill: { height: 6, backgroundColor: colors.accent },
   timeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm },
   time: { ...font.caption, color: colors.muted },
+  skipRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.lg },
+  skip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, minWidth: 104, height: touch.min, paddingHorizontal: spacing.lg, borderRadius: touch.min / 2, backgroundColor: colors.surface },
+  skipText: { ...font.label, color: colors.text },
+  skipNote: { ...font.caption, color: colors.muted, textAlign: 'center' },
   controls: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', gap: 28, paddingTop: spacing.sm },
   control: { alignItems: 'center', gap: 6 },
   side: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },

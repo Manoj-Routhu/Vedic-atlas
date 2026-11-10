@@ -9,6 +9,7 @@ jest.mock('expo-router', () => ({ useRouter: () => mockRouter }));
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
 const mockSpeak = jest.fn();
 jest.mock('expo-speech', () => ({ speak: (...args: unknown[]) => mockSpeak(...args), stop: jest.fn(async () => {}) }));
+jest.mock('expo-speech-recognition', () => ({ ExpoSpeechRecognitionModule: {} }));
 const mockCopy = jest.fn(async (_text: string) => true);
 jest.mock('expo-clipboard', () => ({ setStringAsync: (text: string) => mockCopy(text) }));
 jest.mock('expo-secure-store', () => ({ getItemAsync: jest.fn(async () => null), setItemAsync: jest.fn(async () => {}), deleteItemAsync: jest.fn(async () => {}) }));

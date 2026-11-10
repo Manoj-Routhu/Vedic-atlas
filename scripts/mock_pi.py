@@ -184,6 +184,9 @@ def create_app(
             chunks = [f"You said: {text}"]
 
         async def gen():
+            if "slow" in lower:   # like the real Pi: a filler phrase while the "model" works, then the reply
+                yield sse_encode("Let me think.", event="filler")
+                await asyncio.sleep(0.3)
             for chunk in chunks:
                 yield sse_encode(chunk)
                 await asyncio.sleep(0.02)

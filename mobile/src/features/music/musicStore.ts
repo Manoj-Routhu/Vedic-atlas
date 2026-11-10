@@ -3,7 +3,9 @@ import { createStore } from 'zustand/vanilla';
 import { ApiError, apiErrorFromThrown } from '../../api/errors';
 import type { PiApi } from '../../api/pi';
 import type { MusicInfo } from '../../api/types';
+import type { Language } from '../../state/preferences';
 import { MIC_MESSAGES } from '../look/lookStore';
+import { inLanguage } from '../language/micText';
 import type { Recognizer } from '../look/ports';
 
 export type MusicDeps = {
@@ -12,7 +14,11 @@ export type MusicDeps = {
   recognizer?: Recognizer;
   /** Told about every failure so the connection can react (a removed phone, an unreachable Pi). */
   onApiError?: (e: ApiError) => void;
+  /** The language the microphone listens for (read each time it is needed). English when absent. */
+  language?: () => Language;
   now?: () => number;
+  /** Taps on the skip buttons closer together than this are added up and sent as one jump. */
+  skipMergeMs?: number;
   /** How often to ask the Pi what the music is doing while the screen is open. */
   refreshMs?: number;
 };
@@ -30,6 +36,8 @@ export type MusicStoreState = {
   busy: boolean;
   /** The last thing the user asked for that did not work. */
   error: ApiError | null;
+  /** Where the user has just asked to jump to, shown until the Pi answers so the bar does not snap back. */
+  seekTarget: number | null;
   /** The microphone is open. */
   listening: boolean;
   heard: string;
@@ -48,6 +56,10 @@ export type MusicActions = {
   stop(): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
+  /** Jump to this many seconds into the song (a drag released, or a tap on the bar). */
+  seekTo(seconds: number): void;
+  /** Jump forwards (positive) or back (negative) from where the song is. Taps in quick succession are sent as one jump. */
+  skip(deltaSeconds: number): void;
   dismissError(): void;
   startListening(): Promise<void>;
   finishListening(): void;
@@ -59,7 +71,7 @@ export type MusicActions = {
 };
 
 const INITIAL: MusicStoreState = {
-  info: null, syncedAt: 0, loading: true, asking: null, busy: false, error: null,
+  info: null, syncedAt: 0, loading: true, asking: null, busy: false, error: null, seekTarget: null,
   listening: false, heard: '', micMessage: null, micOffer: false,
 };
 
@@ -74,6 +86,9 @@ export function elapsedNow(s: Pick<MusicStoreState, 'info' | 'syncedAt'>, now: n
 export function createMusicStore(deps: MusicDeps) {
   const now = deps.now ?? Date.now;
   const refreshMs = deps.refreshMs ?? 2_000;
+  const skipMergeMs = deps.skipMergeMs ?? 400;
+  let skipTimer: ReturnType<typeof setTimeout> | null = null;
+  let skipTarget: number | null = null; // where the taps so far add up to
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let polling = false;
   let run = 0; // a new play (or a cancel) bumps it, so a late answer for an older ask is recognised
@@ -120,6 +135,31 @@ export function createMusicStore(deps: MusicDeps) {
         await refresh(); // e.g. "nothing is playing": the song ended a moment ago
       } finally {
         set({ busy: false });
+      }
+    }
+
+    const canSeek = () => {
+      const i = get().info;
+      return i !== null && i.seekable && (i.state === 'playing' || i.state === 'paused');
+    };
+    /** The Pi will not jump closer than 2 s to the stop point, so the screen does not offer it either. */
+    const ceiling = () => {
+      const i = get().info;
+      if (!i || i.durationS === null) return 0;
+      return Math.max(0, (i.limitS !== null ? Math.min(i.durationS, i.limitS) : i.durationS) - 2);
+    };
+    const clampPosition = (seconds: number) => Math.min(Math.max(seconds, 0), ceiling());
+    const clearSkip = () => {
+      if (skipTimer) clearTimeout(skipTimer);
+      skipTimer = null;
+      skipTarget = null;
+    };
+    async function seekNow(target: number) {
+      set({ seekTarget: target });
+      try {
+        await command((api) => api.seekMusic(target));
+      } finally {
+        set({ seekTarget: null }); // the Pi's answer now carries the real position (or the jump failed: back to where it was)
       }
     }
 
@@ -184,6 +224,27 @@ export function createMusicStore(deps: MusicDeps) {
       pause: () => command((api) => api.pauseMusic()),
       resume: () => command((api) => api.resumeMusic()),
 
+      seekTo(seconds) {
+        if (!canSeek() || !Number.isFinite(seconds)) return;
+        clearSkip();
+        void seekNow(clampPosition(seconds));
+      },
+
+      skip(deltaSeconds) {
+        if (!canSeek() || !Number.isFinite(deltaSeconds)) return;
+        const from = skipTarget ?? get().seekTarget ?? elapsedNow(get(), now()) ?? 0;
+        skipTarget = clampPosition(from + deltaSeconds);
+        set({ seekTarget: skipTarget });
+        if (skipTimer) clearTimeout(skipTimer);
+        skipTimer = setTimeout(() => {
+          const target = skipTarget;
+          clearSkip();
+          if (target === null) return;
+          if (canSeek()) void seekNow(target);
+          else set({ seekTarget: null }); // the song ended while the taps were being added up
+        }, skipMergeMs);
+      },
+
       dismissError() {
         set({ error: null });
       },
@@ -206,7 +267,7 @@ export function createMusicStore(deps: MusicDeps) {
           onError: (problem, detail) => {
             if (!current()) return;
             const why = detail && problem !== 'speechPackMissing' ? ` (${detail})` : '';
-            set({ listening: false, heard: '', micMessage: MIC_MESSAGES[problem] + why, micOffer: problem === 'speechPackMissing' && Boolean(deps.recognizer?.downloadSpeechPack) });
+            set({ listening: false, heard: '', micMessage: inLanguage(MIC_MESSAGES[problem] + why, deps.language?.() ?? 'en'), micOffer: problem === 'speechPackMissing' && Boolean(deps.recognizer?.downloadSpeechPack) });
           },
         });
       },
@@ -222,7 +283,8 @@ export function createMusicStore(deps: MusicDeps) {
       async downloadSpeechPack() {
         const download = deps.recognizer?.downloadSpeechPack;
         if (!download) return;
-        set({ micOffer: false, micMessage: 'Asking your phone to download offline English speech…' });
+        const say = (m: string) => inLanguage(m, deps.language?.() ?? 'en');
+        set({ micOffer: false, micMessage: say('Asking your phone to download offline English speech…') });
         try {
           const result = await download.call(deps.recognizer);
           set({
@@ -234,7 +296,7 @@ export function createMusicStore(deps: MusicDeps) {
                   : "Follow your phone's download prompt, then try the microphone again.",
           });
         } catch {
-          set({ micMessage: 'Your phone would not start the download. Open the Google app, then Settings, Voice, Offline speech recognition, and download English (US).', micOffer: true });
+          set({ micMessage: say('Your phone would not start the download. Open the Google app, then Settings, Voice, Offline speech recognition, and download English (US).'), micOffer: true });
         }
       },
 
@@ -245,6 +307,7 @@ export function createMusicStore(deps: MusicDeps) {
       },
 
       reset() {
+        clearSkip();
         get().stopPolling();
         closeMic();
         run++;

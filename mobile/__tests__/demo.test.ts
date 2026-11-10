@@ -82,6 +82,13 @@ describe('DemoApi', () => {
     expect(await api.pendingApprovals()).toEqual([]);
   });
 
+  it('starts a reply with a filler, in Hindi for a Devanagari question', async () => {
+    const english = await drain(fast().chatStream('what is the weather'));
+    expect(english[0]).toEqual<ChatEvent>({ type: 'filler', text: 'Let me think.' });
+    const hindi = await drain(fast().chatStream('मौसम कैसा है'));
+    expect(hindi[0]).toEqual<ChatEvent>({ type: 'filler', text: 'सोचने दीजिए।' });
+  });
+
   it('is honest that it is a demo', async () => {
     const reply = (await drain(fast().chatStream('what is the weather'))).map((e) => (e.type === 'text' ? e.text : '')).join('');
     expect(reply.toLowerCase()).toContain('demo');

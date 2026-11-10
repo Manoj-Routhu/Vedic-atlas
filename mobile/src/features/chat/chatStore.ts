@@ -3,7 +3,9 @@ import { createStore } from 'zustand/vanilla';
 import { ApiError, apiErrorFromThrown } from '../../api/errors';
 import type { PendingApproval } from '../../api/types';
 import { SentenceSplitter } from '../../speech/sentences';
+import { hasDevanagari } from '../../speech/script';
 import { MIC_MESSAGES } from '../look/lookStore';
+import { inLanguage } from '../language/micText';
 import type { SpeechPort } from '../look/ports';
 import type { ChatDeps } from './ports';
 import { DEFAULT_CHAT_TIMING } from './ports';
@@ -16,6 +18,8 @@ export type ChatMessage = {
   streaming: boolean;
   /** The reply could not be completed; the text is what arrived before it failed. */
   failed: boolean;
+  /** "Let me think." while Veda works and no reply text has arrived yet. Display only: gone when the reply starts or ends. */
+  filler: string | null;
 };
 
 export type ChatState = {
@@ -132,8 +136,8 @@ export function createChatStore(deps: ChatDeps) {
         set({
           messages: [
             ...get().messages,
-            { id: nextId, role: 'user', text: message, streaming: false, failed: false },
-            { id: replyId, role: 'veda', text: '', streaming: true, failed: false },
+            { id: nextId, role: 'user', text: message, streaming: false, failed: false, filler: null },
+            { id: replyId, role: 'veda', text: '', streaming: true, failed: false, filler: null },
           ],
           busy: true,
           error: null,
@@ -157,15 +161,23 @@ export function createChatStore(deps: ChatDeps) {
             if (stale()) return;
             if (ev.type === 'text') {
               text += ev.text;
-              patchMessage(replyId, { text });
+              patchMessage(replyId, { text, filler: null });
               say(splitter.push(ev.text));
+              if (get().speak && hasDevanagari(ev.text)) deps.onHindiText?.();
+            } else if (ev.type === 'filler') {
+              if (text !== '') continue; // the reply is already coming: a late filler would only interrupt it
+              patchMessage(replyId, { filler: ev.text });
+              // Said only when the phone is reading replies and not over something else. The speaker picks the voice by script
+              // (and skips Hindi when that voice is not installed).
+              if (get().speak && !getSpeech().isSpeaking) getSpeech().enqueue(ev.text);
+              if (get().speak && hasDevanagari(ev.text)) deps.onHindiText?.();
             } else {
               break;
             }
           }
           if (stale()) return;
           say(splitter.flush());
-          patchMessage(replyId, { streaming: false });
+          patchMessage(replyId, { streaming: false, filler: null });
           set({ busy: false });
         } catch (e) {
           if (stale()) return;
@@ -177,8 +189,8 @@ export function createChatStore(deps: ChatDeps) {
             set({ messages: get().messages.filter((m) => m.id !== replyId && m.id !== replyId - 1), paused: true, busy: false, error: err });
             return;
           }
-          if (partial === '') patchMessage(replyId, { text: err.userMessage, streaming: false, failed: true });
-          else patchMessage(replyId, { streaming: false, failed: true });
+          if (partial === '') patchMessage(replyId, { text: err.userMessage, streaming: false, failed: true, filler: null });
+          else patchMessage(replyId, { streaming: false, failed: true, filler: null });
           set({ busy: false, error: err });
         }
       },
@@ -192,7 +204,7 @@ export function createChatStore(deps: ChatDeps) {
         controller?.abort();
         controller = null;
         speech?.stop();
-        set({ messages: get().messages.map((m) => (m.streaming ? { ...m, streaming: false } : m)), busy: false });
+        set({ messages: get().messages.map((m) => (m.streaming ? { ...m, streaming: false, filler: null } : m)), busy: false });
       },
 
       setSpeak(on) {
@@ -240,7 +252,7 @@ export function createChatStore(deps: ChatDeps) {
           onError: (problem, detail) => {
             if (!current()) return;
             const why = detail && problem !== 'speechPackMissing' ? ` (${detail})` : '';
-            set({ listening: false, heard: '', micMessage: MIC_MESSAGES[problem] + why, micOffer: problem === 'speechPackMissing' && Boolean(deps.recognizer?.downloadSpeechPack) });
+            set({ listening: false, heard: '', micMessage: inLanguage(MIC_MESSAGES[problem] + why, deps.language?.() ?? 'en'), micOffer: problem === 'speechPackMissing' && Boolean(deps.recognizer?.downloadSpeechPack) });
           },
         });
       },
@@ -256,7 +268,8 @@ export function createChatStore(deps: ChatDeps) {
       async downloadSpeechPack() {
         const download = deps.recognizer?.downloadSpeechPack;
         if (!download) return;
-        set({ micOffer: false, micMessage: 'Asking your phone to download offline English speech…' });
+        const say = (m: string) => inLanguage(m, deps.language?.() ?? 'en');
+        set({ micOffer: false, micMessage: say('Asking your phone to download offline English speech…') });
         try {
           const result = await download.call(deps.recognizer);
           set({
@@ -268,7 +281,7 @@ export function createChatStore(deps: ChatDeps) {
                   : "Follow your phone's download prompt, then try the microphone again.",
           });
         } catch {
-          set({ micMessage: 'Your phone would not start the download. Open the Google app, then Settings, Voice, Offline speech recognition, and download English (US).', micOffer: true });
+          set({ micMessage: say('Your phone would not start the download. Open the Google app, then Settings, Voice, Offline speech recognition, and download English (US).'), micOffer: true });
         }
       },
 

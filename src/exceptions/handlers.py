@@ -49,6 +49,8 @@ _STATUS_BY_CODE: dict[str, int] = {
     ExceptionCode.MUSIC_UNAVAILABLE: 503,
     ExceptionCode.MUSIC_NOT_FOUND: 404,
     ExceptionCode.MUSIC_NOT_PLAYING: 409,
+    ExceptionCode.MUSIC_NOT_SEEKABLE: 409,
+    ExceptionCode.MUSIC_SEEK_FAILED: 502,
 }
 
 

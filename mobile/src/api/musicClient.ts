@@ -14,6 +14,7 @@ type RawMusic = {
   elapsed_s?: number | null;
   limit_s?: number | null;
   duration_s?: number | null;
+  seekable?: boolean;
 };
 
 const number = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
@@ -31,6 +32,7 @@ function toMusic(raw: unknown): MusicInfo {
     elapsedS: number(r.elapsed_s),
     limitS: number(r.limit_s),
     durationS: number(r.duration_s),
+    seekable: r.available && r.seekable === true, // an older Pi does not say: then the bar stays read-only
   };
 }
 
@@ -51,6 +53,9 @@ export function musicCalls(send: JsonSender): MusicApi {
     },
     async resumeMusic(signal) {
       return toMusic(await send({ method: 'POST', path: '/api/music/resume' }, signal));
+    },
+    async seekMusic(positionS, signal) {
+      return toMusic(await send({ method: 'POST', path: '/api/music/seek', json: { position_s: positionS } }, signal));
     },
   };
 }

@@ -12,6 +12,11 @@ describe('SentenceSplitter: where a sentence ends', () => {
     expect(split(['It is red. Is it ripe? Yes! Good.'])).toEqual(['It is red.', 'Is it ripe?', 'Yes!', 'Good.']);
   });
 
+  it('splits Hindi on the danda, so a Hindi reply is spoken sentence by sentence', () => {
+    expect(split(['आज मौसम अच्छा है। कल बारिश होगी॥ ठीक है?'])).toEqual(['आज मौसम अच्छा है।', 'कल बारिश होगी॥', 'ठीक है?']);
+    expect(split(['आज मौसम अच्छा है।'])).toEqual(['आज मौसम अच्छा है।']);
+  });
+
   it('keeps the final sentence even with no closing punctuation', () => {
     expect(split(['One. Two'])).toEqual(['One.', 'Two']);
   });

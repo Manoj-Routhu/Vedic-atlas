@@ -3,9 +3,15 @@ import { memoryStorage, type KeyValueStore } from '../src/state/storage';
 
 describe('normalizePreferences', () => {
   it('keeps good values', () => {
-    expect(normalizePreferences({ speechRate: 1.2, speechPitch: 0.9, lookStyle: 'read_text', haptics: false })).toEqual({
-      speechRate: 1.2, speechPitch: 0.9, lookStyle: 'read_text', haptics: false,
+    expect(normalizePreferences({ speechRate: 1.2, speechPitch: 0.9, lookStyle: 'read_text', haptics: false, language: 'hi', hindiOfferDismissed: true })).toEqual({
+      speechRate: 1.2, speechPitch: 0.9, lookStyle: 'read_text', haptics: false, language: 'hi', hindiOfferDismissed: true,
     });
+  });
+
+  it('the language is English until Hindi is chosen, and anything else falls back', () => {
+    expect(DEFAULT_PREFERENCES).toMatchObject({ language: 'en', hindiOfferDismissed: false });
+    expect(normalizePreferences({ language: 'fr', hindiOfferDismissed: 'yes' })).toEqual(DEFAULT_PREFERENCES);
+    expect(normalizePreferences({ language: 'hi' }, { ...DEFAULT_PREFERENCES, language: 'en' }).language).toBe('hi');
   });
 
   it('falls back to the default for anything broken, one field at a time', () => {

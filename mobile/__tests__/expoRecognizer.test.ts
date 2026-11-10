@@ -74,6 +74,19 @@ describe('ExpoRecognizer', () => {
     expect(mockModule.start).toHaveBeenCalledWith({ lang: 'en-US', interimResults: true, continuous: false, requiresOnDeviceRecognition: true });
   });
 
+  it('listens in the language chosen at the moment of asking, and downloads that language', async () => {
+    let locale = 'en-US';
+    const recognizer = new ExpoRecognizer(() => locale);
+    await recognizer.start(listener());
+    expect(mockModule.start).toHaveBeenLastCalledWith(expect.objectContaining({ lang: 'en-US' }));
+    locale = 'hi-IN';
+    await recognizer.start(listener());
+    expect(mockModule.start).toHaveBeenLastCalledWith(expect.objectContaining({ lang: 'hi-IN' }));
+    await recognizer.downloadSpeechPack();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    expect(require('expo-speech-recognition').ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload).toHaveBeenLastCalledWith({ locale: 'hi-IN' });
+  });
+
   it('reports the words as they come, and the last ones when it ends', async () => {
     const l = listener();
     await new ExpoRecognizer().start(l);

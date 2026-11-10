@@ -138,10 +138,16 @@ export function ChatView({ store, link, canApprove, onSettings, micAvailable = f
           ) : (
             <View key={m.id} style={[styles.theirs, m.failed && styles.failedText]} testID="message-veda">
               <Text style={styles.who}>Veda</Text>
-              <Text style={styles.reply} selectable accessibilityLiveRegion="polite">
-                {m.text || (m.streaming ? '…' : '')}
-                {m.streaming && m.text ? <Text style={styles.cursor}>{' ▍'}</Text> : null}
-              </Text>
+              {!m.text && m.filler ? (
+                <Text style={styles.filler} accessibilityLiveRegion="polite" testID="filler">
+                  {m.filler}
+                </Text>
+              ) : (
+                <Text style={styles.reply} selectable accessibilityLiveRegion="polite">
+                  {m.text || (m.streaming ? '…' : '')}
+                  {m.streaming && m.text ? <Text style={styles.cursor}>{' ▍'}</Text> : null}
+                </Text>
+              )}
             </View>
           ),
         )}
@@ -248,6 +254,7 @@ const styles = StyleSheet.create({
   who: { fontSize: 13, fontWeight: '700', color: colors.accent },
   text: { ...font.body, color: colors.text },
   reply: { fontSize: 17, lineHeight: 26, color: colors.text },
+  filler: { fontSize: 17, lineHeight: 26, color: colors.muted, fontStyle: 'italic' },
   cursor: { color: colors.accent },
   composer: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingBottom: spacing.md },
   input: { flex: 1, minHeight: 52, maxHeight: 120, borderRadius: 26, backgroundColor: colors.surface, color: colors.text, paddingHorizontal: 20, paddingVertical: spacing.md, ...font.body },

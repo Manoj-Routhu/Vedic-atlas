@@ -4,11 +4,11 @@ import { ApiError } from '../src/api/errors';
 import type { PiApi } from '../src/api/pi';
 import type { MusicInfo } from '../src/api/types';
 import type { Recognizer, RecognizerListener } from '../src/features/look/ports';
-import { clock, MusicView } from '../src/features/music/MusicView';
+import { clock, MusicView, SKIP_SECONDS } from '../src/features/music/MusicView';
 import { createMusicStore } from '../src/features/music/musicStore';
 
 const info = (patch: Partial<MusicInfo> = {}): MusicInfo => ({
-  available: true, reason: null, state: 'idle', title: null, elapsedS: null, limitS: 300, durationS: null, ...patch,
+  available: true, reason: null, state: 'idle', title: null, elapsedS: null, limitS: 300, durationS: null, seekable: false, ...patch,
 });
 const playing = (patch: Partial<MusicInfo> = {}) => info({ state: 'playing', title: 'Tum Hi Ho - Arijit Singh', elapsedS: 170, limitS: 300, durationS: 400, ...patch });
 
@@ -46,9 +46,13 @@ function setup(state: MusicInfo | null = info()) {
       calls.push('resume');
       return playing();
     },
+    seekMusic: async (positionS: number) => {
+      calls.push(`seek:${positionS}`);
+      return playing({ elapsedS: positionS, seekable: true });
+    },
   };
   const recognizer = new FakeRecognizer();
-  const store = createMusicStore({ getApi: () => api as unknown as PiApi, recognizer });
+  const store = createMusicStore({ getApi: () => api as unknown as PiApi, recognizer, skipMergeMs: 400 }); // roomy: awaited taps can be slow on a busy machine
   if (state) store.setState({ info: state, loading: false, syncedAt: Date.now() });
   return { store, calls, recognizer };
 }
@@ -180,6 +184,84 @@ describe('playing', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Play' }));
     await act(async () => {});
     expect(ctx.calls).toEqual(['play:kun faya kun']);
+  });
+});
+
+describe('jumping around in the song', () => {
+  const song = (patch: Partial<MusicInfo> = {}) => playing({ seekable: true, elapsedS: 60, limitS: 277, durationS: 262, ...patch });
+  const layout = (el: ReturnType<typeof screen.getByTestId>) => fireEvent(el, 'layout', { nativeEvent: { layout: { width: 300, height: 44, x: 0, y: 0 } } });
+
+  it('a song that can be jumped in shows a bar you can adjust, with its place read out', async () => {
+    await open(setup(song()));
+    const bar = screen.getByTestId('music-scrubber');
+    expect(bar.props.accessibilityRole).toBe('adjustable');
+    expect(bar.props.accessibilityValue).toMatchObject({ min: 0, max: 262, now: 60, text: '1:00 of 4:22' });
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+
+  it('dragging shows the place under the finger and lifting jumps there, once', async () => {
+    const ctx = setup(song());
+    await open(ctx);
+    const bar = screen.getByTestId('music-scrubber');
+    await layout(bar);
+    await fireEvent(bar, 'responderGrant', { nativeEvent: { locationX: 150 } });
+    expect(screen.getByText('2:11')).toBeTruthy(); // half way along a 4:22 song
+    await fireEvent(bar, 'responderRelease', { nativeEvent: { locationX: 150 } });
+    await act(async () => {});
+    expect(ctx.calls.filter((c) => c.startsWith('seek'))).toEqual(['seek:131']);
+  });
+
+  it('the back and forward buttons jump by ten seconds, and quick taps are one jump', async () => {
+    const ctx = setup(song());
+    await open(ctx);
+    expect(SKIP_SECONDS).toBe(10);
+    await fireEvent.press(screen.getByRole('button', { name: 'Forward 10 seconds' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Forward 10 seconds' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Back 10 seconds' }));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 700));
+    });
+    const seeks = ctx.calls.filter((c) => c.startsWith('seek'));
+    expect(seeks).toHaveLength(1);
+    expect(Number(seeks[0]?.split(':')[1])).toBeGreaterThanOrEqual(70); // 60 s (a little more as the clock ran), +10
+  });
+
+  it('TalkBack can step the bar', async () => {
+    const ctx = setup(song());
+    await open(ctx);
+    const bar = screen.getByTestId('music-scrubber');
+    await act(async () => bar.props.onAccessibilityAction({ nativeEvent: { actionName: 'increment' } }));
+    const seeks = ctx.calls.filter((c) => c.startsWith('seek'));
+    expect(seeks).toHaveLength(1);
+    expect(Number(seeks[0]?.split(':')[1])).toBeGreaterThanOrEqual(70); // ten seconds on from where the song is (a moment past 1:00)
+    expect(Number(seeks[0]?.split(':')[1])).toBeLessThan(75);
+  });
+
+  it('a paused song can be jumped in too', async () => {
+    const ctx = setup(song({ state: 'paused' }));
+    await open(ctx);
+    expect(screen.getByLabelText('Paused')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Forward 10 seconds' })).toBeTruthy();
+  });
+
+  it('a song of unknown length cannot be jumped in, and says why instead of showing dead buttons', async () => {
+    await open(setup(playing({ seekable: false, durationS: null })));
+    expect(screen.queryByTestId('music-scrubber')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Forward 10 seconds' })).toBeNull();
+    expect(screen.getByTestId('not-seekable')).toHaveTextContent(/can't be skipped through/);
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+  });
+
+  it('an older Pi that does not say shows the plain bar, with no note and no buttons', async () => {
+    await open(setup(playing({ seekable: false, durationS: 262 })));
+    expect(screen.queryByTestId('music-scrubber')).toBeNull();
+    expect(screen.queryByTestId('not-seekable')).toBeNull();
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+  });
+
+  it('nothing to jump in while the song is still being found', async () => {
+    await open(setup(info({ state: 'starting', title: 'Tum Hi Ho - Arijit Singh', seekable: false })));
+    expect(screen.queryByTestId('music-scrubber')).toBeNull();
   });
 });
 

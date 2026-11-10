@@ -16,7 +16,7 @@ describe('Music calls: what is sent and how the answer is read', () => {
   it('status is a GET and is read into the app\'s words', async () => {
     const { api, t } = setup(PLAYING);
     expect(await api.musicStatus()).toEqual({
-      available: true, reason: null, state: 'playing', title: 'Tum Hi Ho - Arijit Singh', elapsedS: 170.5, limitS: 300, durationS: 262,
+      available: true, reason: null, state: 'playing', title: 'Tum Hi Ho - Arijit Singh', elapsedS: 170.5, limitS: 300, durationS: 262, seekable: false,
     });
     expect(t.last).toMatchObject({ method: 'GET', url: 'http://192.168.1.20:8000/api/music/status' });
   });
@@ -37,6 +37,21 @@ describe('Music calls: what is sent and how the answer is read', () => {
     expect(t.last).toMatchObject({ method: 'POST', url: expect.stringContaining('/api/music/pause') });
     await api.resumeMusic();
     expect(t.last).toMatchObject({ method: 'POST', url: expect.stringContaining('/api/music/resume') });
+  });
+
+  it('says whether the song can be jumped in; an older Pi that does not say means no', async () => {
+    expect(await setup({ ...PLAYING, seekable: true }).api.musicStatus()).toMatchObject({ seekable: true });
+    expect(await setup(PLAYING).api.musicStatus()).toMatchObject({ seekable: false });
+    expect(await setup({ ...PLAYING, seekable: 'yes' }).api.musicStatus()).toMatchObject({ seekable: false });
+    expect(await setup({ available: false, seekable: true }).api.musicStatus()).toMatchObject({ seekable: false });
+  });
+
+  it('seek sends the place in seconds and nothing else, and reads the new status', async () => {
+    const { api, t } = setup({ ...PLAYING, elapsed_s: 90, seekable: true });
+    const r = await api.seekMusic(90);
+    expect(t.last).toMatchObject({ method: 'POST', url: 'http://192.168.1.20:8000/api/music/seek' });
+    expect(body(t)).toEqual({ position_s: 90 });
+    expect(r).toMatchObject({ state: 'playing', elapsedS: 90, seekable: true });
   });
 
   it('music that is off says why, and is never "playing"', async () => {
@@ -67,6 +82,12 @@ describe('Music failures, in plain words', () => {
     await expect(err(409, 'MUSIC_NOT_PLAYING').pauseMusic()).rejects.toMatchObject({ kind: 'nothingPlaying' });
   });
 
+  it('409 MUSIC_NOT_SEEKABLE and 502 MUSIC_SEEK_FAILED are said in plain words', async () => {
+    await expect(err(409, 'MUSIC_NOT_SEEKABLE').seekMusic(5)).rejects.toMatchObject({ kind: 'notSeekable' });
+    await expect(err(502, 'MUSIC_SEEK_FAILED', "Couldn't jump just now. Try again.").seekMusic(5)).rejects.toMatchObject({ kind: 'seekFailed' });
+    await expect(err(409, 'MUSIC_NOT_PLAYING').seekMusic(5)).rejects.toMatchObject({ kind: 'nothingPlaying' });
+  });
+
   it('503 MUSIC_UNAVAILABLE is "music is not available", not a vision or memory problem', async () => {
     await expect(err(503, 'MUSIC_UNAVAILABLE', 'Music is unavailable: tools_missing').playSong('x')).rejects.toMatchObject({ kind: 'musicOff' });
   });
@@ -85,12 +106,26 @@ describe('the demo behaves like the real thing', () => {
     const demo = new DemoApi();
     expect((await demo.musicStatus()).state).toBe('idle');
     const started = await demo.playSong('tum hi ho');
-    expect(started).toMatchObject({ state: 'playing', title: 'tum hi ho (demo)', limitS: 300 });
+    expect(started).toMatchObject({ state: 'playing', title: 'tum hi ho (demo)', limitS: 255, durationS: 240, seekable: true });
     const paused = await demo.pauseMusic();
     await new Promise((r) => setTimeout(r, 30));
     expect((await demo.musicStatus()).elapsedS).toBe(paused.elapsedS);
     expect((await demo.resumeMusic()).state).toBe('playing');
     expect((await demo.stopMusic()).state).toBe('idle');
     await expect(demo.pauseMusic()).rejects.toMatchObject({ kind: 'nothingPlaying' });
+  });
+
+  it('jumps in the pretend song, stays inside it, and keeps a pause paused', async () => {
+    const demo = new DemoApi();
+    await expect(demo.seekMusic(30)).rejects.toMatchObject({ kind: 'nothingPlaying' });
+    await demo.playSong('tum hi ho');
+    expect((await demo.seekMusic(120)).elapsedS).toBeGreaterThanOrEqual(120);
+    expect((await demo.seekMusic(-5)).elapsedS).toBeLessThan(1);
+    expect((await demo.seekMusic(9_999)).elapsedS).toBeGreaterThanOrEqual(238);
+    await demo.pauseMusic();
+    const paused = await demo.seekMusic(60);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(paused).toMatchObject({ state: 'paused', elapsedS: 60 });
+    expect((await demo.musicStatus()).elapsedS).toBe(60);
   });
 });

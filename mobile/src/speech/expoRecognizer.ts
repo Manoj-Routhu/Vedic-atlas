@@ -13,10 +13,13 @@ export function problemFromError(code: string): MicProblem {
 }
 
 /**
- * Speech to text on the phone (English). It prefers the on-device model, so a question never leaves the phone when the
+ * Speech to text on the phone (English unless a locale is given). It prefers the on-device model, so a question never leaves the phone when the
  * phone can do it locally. The microphone is asked for the first time the button is held.
  */
 export class ExpoRecognizer implements Recognizer {
+  /** `locale` is read at each start, so a change of language in Settings applies to the next question. Look never passes one. */
+  constructor(private readonly locale: () => string = () => 'en-US') {}
+
   private subscriptions: Subscription[] = [];
   private heard = '';
   private stopRequested = false;
@@ -65,7 +68,7 @@ export class ExpoRecognizer implements Recognizer {
       }),
     ];
     module.start({
-      lang: 'en-US',
+      lang: this.locale(),
       interimResults: true,
       continuous: false,
       requiresOnDeviceRecognition: module.supportsOnDeviceRecognition(),
@@ -73,7 +76,7 @@ export class ExpoRecognizer implements Recognizer {
   }
 
   async downloadSpeechPack(): Promise<SpeechPackResult> {
-    const { status } = await ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: 'en-US' });
+    const { status } = await ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: this.locale() });
     return status === 'download_success' ? 'ready' : status === 'download_scheduled' ? 'scheduled' : 'dialog';
   }
 

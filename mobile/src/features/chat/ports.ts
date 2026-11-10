@@ -1,6 +1,7 @@
 import type { ApiError } from '../../api/errors';
 import type { PiApi } from '../../api/pi';
 import type { PendingApproval } from '../../api/types';
+import type { Language } from '../../state/preferences';
 import type { Recognizer, SpeechPort } from '../look/ports';
 
 export type ChatTiming = {
@@ -20,6 +21,10 @@ export type ChatDeps = {
   recognizer?: Recognizer;
   /** Told about every failure so the connection can react (a removed phone, an unreachable Pi). */
   onApiError?: (e: ApiError) => void;
+  /** The language the microphone listens for (read each time it is needed). English when absent. */
+  language?: () => Language;
+  /** A Hindi reply (or filler) arrived while replies are being read aloud: the app may offer the Hindi voice. */
+  onHindiText?: () => void;
   /** New approvals have appeared: say so out loud and vibrate (the screen is in front). */
   notify?: (approvals: PendingApproval[]) => void;
   timing?: Partial<ChatTiming>;

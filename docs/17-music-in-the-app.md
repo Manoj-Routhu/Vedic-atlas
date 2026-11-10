@@ -39,7 +39,7 @@ Status: `{available, reason, state, title, elapsed_s, limit_s, duration_s}`.
 
 Errors (shown in the app's own words, never the Pi's text): `MUSIC_UNAVAILABLE` 503, `MUSIC_NOT_FOUND` 404 (nothing matched, or the search itself failed), `MUSIC_NOT_PLAYING` 409. An empty or over-200-character query is a 422 before anything happens.
 
-Not added: volume, seeking, a queue, picking from the search results. Not open to phones: anything else under `/api/music/`.
+Seeking was added later: `POST /api/music/seek {position_s}` and a `seekable` field (see `mobile-app/18-chat-fillers-and-music-seek-design.md`, parts B and H). Not added: volume, a queue, picking from the search results. Not open to phones: anything else under `/api/music/`.
 
 ## 4. The screens (design: `Veda Mobile App Screens` canvas, boards 11 to 14)
 

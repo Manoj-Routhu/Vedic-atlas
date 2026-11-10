@@ -92,6 +92,18 @@ def get_music_service(request: Request):
     return music
 
 
+def get_filler_settings(request: Request):
+    """The "I'm working on it" phrases and timing (AudioConfig.filler_*), or None when there is no config or
+    `filler_max_count` is 0. Fillers are a nicety, so a missing config means none, never an error."""
+    from service.agent.filler_schedule import FillerSettings
+
+    cfg = getattr(request.app.state, "full_config", None)
+    audio = getattr(cfg, "audio", None)
+    if audio is None or audio.filler_max_count <= 0:
+        return None
+    return FillerSettings.from_audio(audio)
+
+
 def get_device_service(request: Request):
     """503 when phone pairing is disabled (devices.enabled: false)."""
     return _require(request, "device_service", "device pairing")

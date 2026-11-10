@@ -6,8 +6,11 @@ export type VisionEvent =
   | { type: 'done' }
   | { type: 'error'; code: string; message: string };
 
-/** Chat chunks are plain text in `data:` lines; the Pi ends the stream with `[DONE]`. */
-export type ChatEvent = { type: 'text'; text: string } | { type: 'done' };
+/**
+ * Chat chunks are plain text in `data:` lines; the Pi ends the stream with `[DONE]`. While the model works the Pi may also
+ * send an `event: filler` ("Let me think."): shown (and spoken) until the reply starts, never part of the reply.
+ */
+export type ChatEvent = { type: 'text'; text: string } | { type: 'filler'; text: string } | { type: 'done' };
 
 export type PairResult = { deviceId: string; token: string; scopes: string[] };
 export type ImageInfo = { imageId: string; width: number; height: number };
@@ -96,4 +99,6 @@ export type MusicInfo = {
   limitS: number | null;
   /** The song's own length, when known. */
   durationS: number | null;
+  /** The phone may jump to another place in the song (playing or paused, and its length is known). */
+  seekable: boolean;
 };

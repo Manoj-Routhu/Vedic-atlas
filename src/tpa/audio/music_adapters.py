@@ -187,6 +187,9 @@ class MpvPlayer:
     async def resume(self) -> None:
         await self._command("set_property", "pause", False)
 
+    async def seek(self, position_s: float) -> None:
+        await self._command("seek", float(position_s), "absolute")
+
     async def stop(self) -> None:
         proc, self._proc = self._proc, None
         if proc is not None and proc.poll() is None:

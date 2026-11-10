@@ -43,7 +43,7 @@ const gated = (first: ChatEvent[], gate: Promise<void>, rest: ChatEvent[]): Scri
 
 const approval = (id: string, summary = 'Send an email to Priya'): PendingApproval => ({ requestId: id, actionName: 'send_email', ageSeconds: 3, summary });
 
-function setup(opts: { timing?: object } = {}) {
+function setup(opts: { timing?: object; deps?: object } = {}) {
   const sent: string[] = [];
   const scripts: Script[] = [];
   let pending: PendingApproval[] = [];
@@ -73,7 +73,7 @@ function setup(opts: { timing?: object } = {}) {
   const speech = { enqueue: jest.fn(), stop: jest.fn(), isSpeaking: false };
   const onApiError = jest.fn();
   const notify = jest.fn();
-  const store = createChatStore({ getApi: () => api as unknown as PiApi, makeSpeech: () => speech, onApiError, notify, timing: opts.timing as never });
+  const store = createChatStore({ getApi: () => api as unknown as PiApi, makeSpeech: () => speech, onApiError, notify, timing: opts.timing as never, ...opts.deps });
   return {
     store,
     sent,
@@ -365,5 +365,137 @@ describe('polling for approvals', () => {
     await jest.advanceTimersByTimeAsync(0);
     expect(notify).toHaveBeenCalledTimes(1);
     store.getState().stopPolling();
+  });
+});
+
+const filler = (t: string): ChatEvent => ({ type: 'filler', text: t });
+
+describe('filler phrases while Veda works', () => {
+  const shown = (store: ReturnType<typeof setup>['store']) => store.getState().messages[1]?.filler ?? null;
+
+  it('shows the filler in the empty reply, then drops it when the reply starts', async () => {
+    const { store, scripts } = setup();
+    let release: () => void = () => {};
+    scripts.push(gated([filler('Let me think.')], new Promise<void>((r) => (release = r)), [text('Done.'), DONE]));
+    const run = store.getState().send('what are my tasks');
+    await tick();
+    await tick();
+    expect(shown(store)).toBe('Let me think.');
+    expect(store.getState().messages[1]?.text).toBe('');
+    release();
+    await run;
+    expect(store.getState().messages[1]).toMatchObject({ text: 'Done.', filler: null, streaming: false });
+  });
+
+  it('a later filler replaces the earlier one', async () => {
+    const { store, scripts } = setup();
+    let release: () => void = () => {};
+    scripts.push(gated([filler('One moment.'), filler('Still on it.')], new Promise<void>((r) => (release = r)), [text('Hi.'), DONE]));
+    const run = store.getState().send('hi');
+    await tick();
+    await tick();
+    await tick();
+    expect(shown(store)).toBe('Still on it.');
+    release();
+    await run;
+  });
+
+  it('a filler that arrives after the reply started is ignored', async () => {
+    const { store, scripts, speech } = setup();
+    store.getState().setSpeak(true);
+    scripts.push(events(text('Answer. '), filler('Still on it.'), text('More.'), DONE));
+    await store.getState().send('hi');
+    expect(store.getState().messages[1]).toMatchObject({ text: 'Answer. More.', filler: null });
+    expect(speech.enqueue).not.toHaveBeenCalledWith('Still on it.');
+  });
+
+  it('is cleared when the answer fails and when the user stops it', async () => {
+    const failed = setup();
+    failed.scripts.push(failAfter([filler('Checking.')], new ApiError('cutOff')));
+    await failed.store.getState().send('hi');
+    expect(failed.store.getState().messages[1]).toMatchObject({ failed: true, filler: null });
+
+    const stopped = setup();
+    let release: () => void = () => {};
+    stopped.scripts.push(gated([filler('Checking.')], new Promise<void>((r) => (release = r)), []));
+    const run = stopped.store.getState().send('hi');
+    await tick();
+    await tick();
+    expect(shown(stopped.store)).toBe('Checking.');
+    stopped.store.getState().stop();
+    expect(stopped.store.getState().messages[1]).toMatchObject({ streaming: false, filler: null });
+    release();
+    await run;
+  });
+
+  it('is read aloud when Speak replies is on, and only then', async () => {
+    const on = setup();
+    on.store.getState().setSpeak(true);
+    on.scripts.push(events(filler('Let me think.'), text('Done.'), DONE));
+    await on.store.getState().send('hi');
+    expect(on.speech.enqueue.mock.calls.map((c) => c[0])).toEqual(['Let me think.', 'Done.']);
+
+    const off = setup();
+    off.scripts.push(events(filler('Let me think.'), text('Done.'), DONE));
+    await off.store.getState().send('hi');
+    expect(off.speech.enqueue).not.toHaveBeenCalled();
+    expect(off.store.getState().messages[1]?.text).toBe('Done.');
+  });
+
+  it('is not read over something that is already being spoken', async () => {
+    const { store, scripts, speech } = setup();
+    store.getState().setSpeak(true);
+    (speech as { isSpeaking: boolean }).isSpeaking = true;
+    scripts.push(events(filler('Let me think.'), DONE));
+    await store.getState().send('hi');
+    expect(speech.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('a Hindi filler is shown and handed to the speaker, which picks the Hindi voice (or skips it)', async () => {
+    const { store, scripts, speech } = setup();
+    store.getState().setSpeak(true);
+    scripts.push(events(filler('सोचने दीजिए।'), DONE));
+    await store.getState().send('मेरे काम');
+    expect(speech.enqueue).toHaveBeenCalledWith('सोचने दीजिए।');
+  });
+
+  it('the filler is never part of the reply text', async () => {
+    const { store, scripts } = setup();
+    scripts.push(events(filler('Let me think.'), text('Four.'), DONE));
+    await store.getState().send('2+2');
+    expect(store.getState().messages.map((m) => m.text)).toEqual(['2+2', 'Four.']);
+  });
+});
+
+describe('Hindi in the chat', () => {
+  it('tells the app when a Hindi reply or filler arrives while replies are read aloud (so it can offer the voice)', async () => {
+    const onHindiText = jest.fn();
+    const { store, scripts } = setup({ deps: { onHindiText } });
+    store.getState().setSpeak(true);
+    scripts.push(events(filler('सोचने दीजिए।'), text('आज मौसम अच्छा है। '), DONE));
+    await store.getState().send('मौसम');
+    expect(onHindiText).toHaveBeenCalled();
+  });
+
+  it('does not nag when replies are not read aloud, or when the reply is English', async () => {
+    const quiet = jest.fn();
+    const a = setup({ deps: { onHindiText: quiet } });
+    a.scripts.push(events(text('आज मौसम अच्छा है। '), DONE));
+    await a.store.getState().send('मौसम');
+    const english = jest.fn();
+    const b = setup({ deps: { onHindiText: english } });
+    b.store.getState().setSpeak(true);
+    b.scripts.push(events(text('It is sunny. '), DONE));
+    await b.store.getState().send('weather');
+    expect(quiet).not.toHaveBeenCalled();
+    expect(english).not.toHaveBeenCalled();
+  });
+
+  it('speaks Hindi sentences one by one as they finish', async () => {
+    const { store, scripts, speech } = setup();
+    store.getState().setSpeak(true);
+    scripts.push(events(text('आज मौसम अच्छा है। '), text('कल बारिश होगी। '), DONE));
+    await store.getState().send('मौसम');
+    expect(speech.enqueue.mock.calls.map((c) => c[0])).toEqual(['आज मौसम अच्छा है।', 'कल बारिश होगी।']);
   });
 });

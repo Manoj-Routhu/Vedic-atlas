@@ -321,19 +321,26 @@ class VedaClient:
         ) as resp:
             resp.raise_for_status()
             data_lines: list[str] = []
+            event_name: str | None = None
             for raw in resp.iter_lines():
                 line = raw or ""
                 if line == "":
+                    named, event_name = event_name, None
                     if not data_lines:
                         continue
                     text = "\n".join(data_lines)
                     data_lines = []
+                    if named not in (None, "message"):
+                        continue  # a named event such as `filler`: not reply text (the CLI shows its own spinner words)
                     if text == "[DONE]":
                         return
                     yield text
                     continue
                 if line.startswith(":"):
                     continue  # SSE comment
+                if line.startswith("event:"):
+                    event_name = line[6:].strip()
+                    continue
                 if line.startswith("data:"):
                     value = line[5:]
                     if value.startswith(" "):

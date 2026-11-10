@@ -181,6 +181,7 @@ export class VedaApi implements PiApi {
   stopMusic = (signal?: AbortSignal) => this.music.stopMusic(signal);
   pauseMusic = (signal?: AbortSignal) => this.music.pauseMusic(signal);
   resumeMusic = (signal?: AbortSignal) => this.music.resumeMusic(signal);
+  seekMusic = (positionS: number, signal?: AbortSignal) => this.music.seekMusic(positionS, signal);
 
   // ---------- streams ----------
 
@@ -234,7 +235,13 @@ export class VedaApi implements PiApi {
           yield { type: 'done' };
           return;
         }
-        if (sse.data !== '') yield { type: 'text', text: sse.data };
+        if (sse.event === 'filler') {
+          if (sse.data.trim() !== '') yield { type: 'filler', text: sse.data };
+        } else if (sse.event !== null && sse.event !== 'message') {
+          continue; // a named event this app does not know (a newer Pi): never show it as reply text
+        } else if (sse.data !== '') {
+          yield { type: 'text', text: sse.data };
+        }
       }
       if (!finished && !signal?.aborted) throw new ApiError('cutOff');
     } catch (e) {

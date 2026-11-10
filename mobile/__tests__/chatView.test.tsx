@@ -141,3 +141,29 @@ describe('ChatView', () => {
     expect(screen.getByTestId('chat-error')).toBeTruthy();
   });
 });
+
+describe('ChatView filler', () => {
+  it('shows the filler in grey italics while waiting, and the reply replaces it', async () => {
+    let release: () => void = () => {};
+    const ctx = setup({
+      reply: async function* () {
+        yield { type: 'filler', text: 'Let me think.' } as never;
+        await new Promise<void>((r) => (release = r));
+        yield { type: 'text', text: 'It is sunny.' } as const;
+        yield { type: 'done' } as const;
+      },
+    });
+    await open(ctx);
+    await fireEvent.changeText(screen.getByTestId('chat-input'), 'weather');
+    await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
+    await act(async () => {});
+    expect(screen.getByTestId('filler')).toBeTruthy();
+    expect(screen.getByText('Let me think.').props.accessibilityLiveRegion).toBe('polite');
+    expect(screen.queryByText('…')).toBeNull();
+    await act(async () => {
+      release();
+    });
+    expect(screen.queryByTestId('filler')).toBeNull();
+    expect(screen.getByText('It is sunny.')).toBeTruthy();
+  });
+});

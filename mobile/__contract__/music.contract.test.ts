@@ -90,7 +90,7 @@ describeIfPython('the Music tab against the real Pi routes (mock Pi)', () => {
     const queued = await api.playSong('tum hi ho');
     expect(queued.title).toBe('Tum Hi Ho - Mock Artist');
     const playing = await until(() => api.musicStatus(), (s) => s.state === 'playing');
-    expect(playing).toMatchObject({ limitS: 300, durationS: 240 });
+    expect(playing).toMatchObject({ limitS: 255, durationS: 240, seekable: true }); // the song's own length + 15 s of slack
     expect(playing.elapsedS).not.toBeNull();
     expect((await api.stopMusic()).state).toBe('idle');
   });
@@ -105,6 +105,46 @@ describeIfPython('the Music tab against the real Pi routes (mock Pi)', () => {
     await sleep(300);
     expect((await api.musicStatus()).elapsedS).toBe(paused.elapsedS);
     expect((await api.resumeMusic()).state).toBe('playing');
+    await api.stopMusic();
+  });
+
+  it('jumping in the song moves the place, keeps a pause paused, and the store drives it over real HTTP', async () => {
+    const api = await pairedApi(mock);
+    await api.playSong('shape of you');
+    await until(() => api.musicStatus(), (s) => s.state === 'playing');
+    const jumped = await api.seekMusic(120);
+    expect(jumped).toMatchObject({ state: 'playing', seekable: true });
+    expect(jumped.elapsedS).toBeGreaterThanOrEqual(120);
+    expect(jumped.elapsedS).toBeLessThan(125);
+    expect((await api.seekMusic(80_000)).elapsedS).toBeGreaterThanOrEqual(238); // never closer than 2 s to the end of a 240 s song
+    expect((await api.seekMusic(0)).elapsedS).toBeLessThan(5);
+    await expect(api.seekMusic(-10)).rejects.toMatchObject({ kind: 'validation' }); // the app never sends this; the Pi refuses it
+
+    const paused = await api.pauseMusic();
+    const still = await api.seekMusic(60);
+    expect(still).toMatchObject({ state: 'paused', elapsedS: 60 });
+    await sleep(200);
+    expect((await api.musicStatus()).elapsedS).toBe(60);
+    await api.resumeMusic();
+    expect(paused.state).toBe('paused');
+
+    const store = createMusicStore({ getApi: () => api, refreshMs: 50, skipMergeMs: 20 });
+    await store.getState().refresh();
+    store.getState().skip(10);
+    store.getState().skip(10);
+    await sleep(150);
+    expect(store.getState().seekTarget).toBeNull();
+    expect(store.getState().info?.elapsedS).toBeGreaterThanOrEqual(80);
+    await api.stopMusic();
+  });
+
+  it('jumping with nothing playing is "nothing is playing"; a bad place is refused by the Pi', async () => {
+    const api = await pairedApi(mock);
+    await api.stopMusic();
+    await expect(api.seekMusic(30)).rejects.toMatchObject({ kind: 'nothingPlaying' });
+    await api.playSong('shape of you');
+    await until(() => api.musicStatus(), (s) => s.state === 'playing');
+    await expect(api.seekMusic(Number.NaN)).rejects.toBeTruthy();
     await api.stopMusic();
   });
 
@@ -126,6 +166,7 @@ describeIfPython('the Music tab against the real Pi routes (mock Pi)', () => {
     await expect(api.musicStatus()).rejects.toMatchObject({ kind: 'forbidden' });
     await expect(api.playSong('anything')).rejects.toMatchObject({ kind: 'forbidden' });
     await expect(api.stopMusic()).rejects.toMatchObject({ kind: 'forbidden' });
+    await expect(api.seekMusic(10)).rejects.toMatchObject({ kind: 'forbidden' });
   });
 
   it('the store drives it: asking shows the words, then the song the Pi picked, then idle after Stop', async () => {

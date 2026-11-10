@@ -83,6 +83,19 @@ describeIfPython('the chat session against the real Pi routes (mock Pi)', () => 
     expect(s.messages[1]?.text.length).toBeGreaterThan(0);
   });
 
+  it('a slow answer shows its filler first, over the real framing, and the filler is not in the reply', async () => {
+    const api = await pairedApi();
+    const kinds: string[] = [];
+    for await (const e of api.chatStream('slow please')) kinds.push(e.type);
+    expect(kinds[0]).toBe('filler');
+    expect(kinds[kinds.length - 1]).toBe('done');
+    const store = chatOn(api);
+    await store.getState().send('slow please');
+    const reply = store.getState().messages[1];
+    expect(reply?.text).toBe('You said: slow please');
+    expect(reply?.filler).toBeNull();
+  });
+
   it('line breaks in a reply survive the stream', async () => {
     const store = chatOn(await pairedApi());
     await store.getState().send('multi');

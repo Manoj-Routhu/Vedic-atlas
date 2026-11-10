@@ -41,6 +41,9 @@ class _Player:
     async def resume(self) -> None:
         pass
 
+    async def seek(self, position_s: float) -> None:
+        pass
+
     async def stop(self) -> None:
         self.is_playing = False
 

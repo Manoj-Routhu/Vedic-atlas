@@ -275,6 +275,20 @@ describe('chatStream', () => {
     ]);
   });
 
+  it('reads an `event: filler` as a filler, not as reply text, and ignores event names it does not know', async () => {
+    const t = new FakeTransport(() => ({
+      stream: ['event: filler\ndata: Let me think.\n\nevent: progress\ndata: 40%\n\nevent: message\ndata: Sure.\n\ndata: Done.\n\ndata: [DONE]\n\n'],
+    }));
+    expect(await drain(api(t).chatStream('hi'))).toEqual<ChatEvent[]>([
+      { type: 'filler', text: 'Let me think.' }, { type: 'text', text: 'Sure.' }, { type: 'text', text: 'Done.' }, { type: 'done' },
+    ]);
+  });
+
+  it('keeps a Hindi filler as it came, and drops an empty one', async () => {
+    const t = new FakeTransport(() => ({ stream: ['event: filler\ndata: सोचने दीजिए।\n\nevent: filler\ndata:  \n\ndata: [DONE]\n\n'] }));
+    expect(await drain(api(t).chatStream('hi'))).toEqual<ChatEvent[]>([{ type: 'filler', text: 'सोचने दीजिए।' }, { type: 'done' }]);
+  });
+
   it('is paused with a clear message while auto-approve is on at the Pi', async () => {
     const t = new FakeTransport(() => json(403, { error: { code: 'DEVICE_FORBIDDEN', message: 'auto-approve (yolo) is on; chat from the phone is paused' } }));
     expect((await failure(drain(api(t).chatStream('hi')))).kind).toBe('autoApproveOn');

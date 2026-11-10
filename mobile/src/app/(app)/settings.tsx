@@ -1,15 +1,16 @@
 import Constants from 'expo-constants';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { apiErrorFromThrown } from '@/api/errors';
 import type { VisionStyle } from '@/api/types';
+import { languageSetup, useLanguageSetup } from '@/features/language/languageRuntime';
 import { buildDiagnostics } from '@/features/settings/diagnostics';
 import { ExpoSpeaker } from '@/speech/expoSpeaker';
 import { connectionStore, useConnection } from '@/state/connection';
-import { preferencesStore, usePreferences } from '@/state/preferences';
+import { preferencesStore, usePreferences, type Language } from '@/state/preferences';
 import { Banner } from '@/ui/Banner';
 import { Button } from '@/ui/Button';
 import { Chips } from '@/ui/Chips';
@@ -28,11 +29,17 @@ const PITCHES = [
   { value: 1, label: 'Normal' },
   { value: 1.1, label: 'Higher' },
 ];
+const LANGUAGES: { value: Language; label: string }[] = [
+  { value: 'en', label: 'English' },
+  { value: 'hi', label: 'हिन्दी' },
+];
 const MODES: { value: VisionStyle; label: string }[] = [
   { value: 'brief', label: 'Describe' },
   { value: 'read_text', label: 'Read text' },
   { value: 'detailed', label: 'Detailed' },
 ];
+
+const packText = (installed: boolean | null) => (installed === true ? 'ready' : installed === false ? 'not downloaded yet' : "can't tell");
 
 /** The value in `options` closest to `current`, so a saved 1.0000001 still shows "Normal". */
 const nearest = (options: { value: number }[], current: number) =>
@@ -45,6 +52,12 @@ export default function Settings() {
   const saved = useConnection((s) => s.saved);
   const link = useConnection((s) => s.link);
   const prefs = usePreferences((s) => s.prefs);
+  const hindi = useLanguageSetup((s) => s.status);
+  const hindiNote = useLanguageSetup((s) => s.note);
+  const hindiWorking = useLanguageSetup((s) => s.working);
+  useEffect(() => {
+    void languageSetup.getState().refresh();
+  }, []);
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -204,6 +217,30 @@ export default function Settings() {
           <Button variant="secondary" label="Hear a sample" onPress={sample} />
         </Section>
 
+        <Section title="Language" testID="language-card">
+          <Text style={styles.cardLabel}>Chat and Music listen and speak</Text>
+          <Chips
+            label="Language"
+            options={LANGUAGES}
+            selected={prefs.language}
+            onSelect={(v) => {
+              void preferencesStore.getState().update({ language: v });
+              if (v === 'hi') void languageSetup.getState().setUp(); // asks for the Hindi voice / speech pack if the phone lacks them
+            }}
+          />
+          <Text style={styles.hint}>Look always uses English.</Text>
+          {prefs.language === 'hi' || hindi.voice === false || hindi.recognition === false ? (
+            <View testID="hindi-status" style={styles.hindiStatus}>
+              <Text style={styles.hint}>{`Hindi voice (the phone reads Hindi aloud): ${packText(hindi.voice)}`}</Text>
+              <Text style={styles.hint}>{`Hindi speech (you speak Hindi): ${packText(hindi.recognition)}`}</Text>
+              {hindiNote ? <Text style={styles.hint}>{hindiNote}</Text> : null}
+              {hindi.voice === false || hindi.recognition === false ? (
+                <Button variant="secondary" label={hindiWorking ? 'Working…' : 'Download Hindi'} disabled={hindiWorking} onPress={() => void languageSetup.getState().setUp()} />
+              ) : null}
+            </View>
+          ) : null}
+        </Section>
+
         <Section title="Look">
           <Text style={styles.cardLabel}>Starts in</Text>
           <Chips label="Starts in" options={MODES} selected={prefs.lookStyle} onSelect={(v) => void preferencesStore.getState().update({ lookStyle: v })} />
@@ -284,6 +321,8 @@ const styles = StyleSheet.create({
   input: { minHeight: touch.button, borderRadius: radius.pill, backgroundColor: colors.surfaceHigh, color: colors.text, paddingHorizontal: spacing.lg, ...font.body },
   problem: { ...font.caption, color: colors.dangerSoft },
   buttons: { flexDirection: 'row', gap: spacing.md },
+  hint: { ...font.caption, color: colors.textSoft },
+  hindiStatus: { gap: spacing.sm },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: touch.min },
   switchText: { ...font.body, color: colors.text },
   track: { width: 52, height: 30, borderRadius: 15, backgroundColor: colors.surfaceHigh, justifyContent: 'center', padding: 3 },

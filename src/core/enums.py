@@ -55,6 +55,8 @@ class ExceptionCode(str, Enum):
     MUSIC_UNAVAILABLE = "MUSIC_UNAVAILABLE"  # music is switched off, offline, or mpv / yt-dlp are missing
     MUSIC_NOT_FOUND = "MUSIC_NOT_FOUND"  # no song matched, or the search itself failed
     MUSIC_NOT_PLAYING = "MUSIC_NOT_PLAYING"  # pause / resume with no song playing
+    MUSIC_NOT_SEEKABLE = "MUSIC_NOT_SEEKABLE"  # seek in a song whose length is unknown (a live stream)
+    MUSIC_SEEK_FAILED = "MUSIC_SEEK_FAILED"  # the player would not jump
 
     def __repr__(self):
         return self.value
@@ -93,6 +95,8 @@ class ErrorMessage(Enum):
     MUSIC_UNAVAILABLE = "Music is unavailable: {detail}"
     MUSIC_NOT_FOUND = "{detail}"
     MUSIC_NOT_PLAYING = "No song is playing"
+    MUSIC_NOT_SEEKABLE = "This song can't be skipped through"
+    MUSIC_SEEK_FAILED = "{detail}"
 
     def __repr__(self):
         return self.value

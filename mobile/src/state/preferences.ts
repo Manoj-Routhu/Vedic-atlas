@@ -14,9 +14,15 @@ export type Preferences = {
   lookStyle: VisionStyle;
   /** Small vibrations on the shutter, on success and on failure. */
   haptics: boolean;
+  /** What Chat and Music listen for and speak. Look is always English. */
+  language: Language;
+  /** The user said "Not now" to the Hindi voice offer that comes with a Hindi reply: do not ask again on their own. */
+  hindiOfferDismissed: boolean;
 };
 
-export const DEFAULT_PREFERENCES: Preferences = { speechRate: 1, speechPitch: 1, lookStyle: 'brief', haptics: true };
+export type Language = 'en' | 'hi';
+
+export const DEFAULT_PREFERENCES: Preferences = { speechRate: 1, speechPitch: 1, lookStyle: 'brief', haptics: true, language: 'en', hindiOfferDismissed: false };
 
 export const RATE_RANGE = { min: 0.5, max: 2 } as const;
 export const PITCH_RANGE = { min: 0.5, max: 2 } as const;
@@ -33,6 +39,8 @@ export function normalizePreferences(raw: unknown, base: Preferences = DEFAULT_P
     speechPitch: number(r.speechPitch, base.speechPitch, PITCH_RANGE.min, PITCH_RANGE.max),
     lookStyle: STYLES.includes(r.lookStyle as VisionStyle) ? (r.lookStyle as VisionStyle) : base.lookStyle,
     haptics: typeof r.haptics === 'boolean' ? r.haptics : base.haptics,
+    language: r.language === 'en' || r.language === 'hi' ? r.language : base.language,
+    hindiOfferDismissed: typeof r.hindiOfferDismissed === 'boolean' ? r.hindiOfferDismissed : base.hindiOfferDismissed,
   };
 }
 

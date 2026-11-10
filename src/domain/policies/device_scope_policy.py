@@ -50,6 +50,7 @@ _RULES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/api/music/stop", SCOPE_CONTROL),
     ("POST", "/api/music/pause", SCOPE_CONTROL),
     ("POST", "/api/music/resume", SCOPE_CONTROL),
+    ("POST", "/api/music/seek", SCOPE_CONTROL),   # moves the song on the Pi's speaker, like pause and resume
     # vision
     ("PUT", "/api/vision/images", SCOPE_VISION),
     ("POST", "/api/vision/ask", SCOPE_VISION),

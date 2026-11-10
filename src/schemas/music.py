@@ -9,6 +9,10 @@ class PlayRequest(BaseModel):
     query: str = Field(min_length=1, max_length=200)   # the words of the song; the service cleans and bounds them
 
 
+class SeekRequest(BaseModel):
+    position_s: float = Field(ge=0, le=86_400, allow_inf_nan=False)   # seconds from the start of the song; clamped to the song
+
+
 class MusicStatusResponse(BaseModel):
     available: bool
     reason: str | None = None   # when not available: off | offline | tools_missing
@@ -17,3 +21,4 @@ class MusicStatusResponse(BaseModel):
     elapsed_s: float | None = None
     limit_s: float | None = None
     duration_s: float | None = None
+    seekable: bool = False   # the phone may jump to another place in the song (playing or paused, length known)

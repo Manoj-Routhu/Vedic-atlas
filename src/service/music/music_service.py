@@ -57,7 +57,8 @@ class MusicService:
         self._paused_for_speech = False     # a reminder is being spoken over the song
         self._user_paused = False           # the phone (or anyone) pressed Pause
         self._player_paused = False         # what the player was last told
-        self._elapsed_before = 0.0          # seconds played before the current stretch
+        self._position_before = 0.0         # where in the song the current stretch began (a seek moves it)
+        self._played_before = 0.0           # seconds listened to before the current stretch (never goes back: the safety cap)
         self._stretch_start: float | None = None   # when the current stretch began; None while paused
 
     # ---- lifecycle ----------------------------------------------------------------------------------------------
@@ -83,13 +84,21 @@ class MusicService:
     def track(self) -> Track | None:
         return self._track
 
+    def _running(self) -> float:
+        """Seconds since the current stretch began; 0 while paused."""
+        return time.monotonic() - self._stretch_start if self._stretch_start is not None else 0.0
+
     @property
     def elapsed_s(self) -> float | None:
-        """Seconds of the song actually played so far (time spent paused is not counted); None unless it is playing."""
+        """Where in the song we are: time spent paused is not counted and a seek moves it. None unless playing or paused."""
         if self._state != PLAYING:
             return None
-        running = time.monotonic() - self._stretch_start if self._stretch_start is not None else 0.0
-        return self._elapsed_before + running
+        return self._position_before + self._running()
+
+    @property
+    def seekable(self) -> bool:
+        """The phone may jump around in this song: it is playing (or paused) and its length is known."""
+        return self._state == PLAYING and self._track is not None and bool(self._track.duration_sec and self._track.duration_sec > 0)
 
     def status(self) -> MusicStatus:
         if self._state == IDLE or self._track is None:
@@ -98,7 +107,7 @@ class MusicService:
             return MusicStatus("starting", title=self._track.title, limit_s=self._limit_for(self._track) or None, duration_s=self._track.duration_sec)
         return MusicStatus(
             "paused" if self._user_paused else "playing", title=self._track.title, elapsed_s=self.elapsed_s,
-            limit_s=self._limit_s or None, duration_s=self._track.duration_sec,
+            limit_s=self._limit_s or None, duration_s=self._track.duration_sec, seekable=self.seekable,
         )
 
     def _limit_for(self, track: Track) -> float:
@@ -152,7 +161,8 @@ class MusicService:
         was = self._state
         self._state, self._track, self._paused_for_speech = IDLE, None, False
         self._user_paused = self._player_paused = False
-        self._elapsed_before, self._stretch_start = 0.0, None
+        self._position_before = self._played_before = 0.0
+        self._stretch_start = None
         if was != IDLE:
             logger.info(f"[music] stopped ({reason}); the microphone may reopen")
             self._gate.resume_capture(SOURCE)
@@ -162,9 +172,10 @@ class MusicService:
             await self._wait_until_quiet()
             await self._player.start(track.url, self._on_finished)
             self._state = PLAYING
-            self._elapsed_before, self._stretch_start = 0.0, time.monotonic()
+            self._position_before = self._played_before = 0.0
+            self._stretch_start = time.monotonic()
             self._limit_s = self._limit_for(track)
-            self._arm_limit(self._limit_s)
+            self._rearm()
             logger.info(
                 f"[music] playing {log_text(track.title)} (length "
                 f"{'unknown' if not track.duration_sec else f'{track.duration_sec:.0f}s'}, limit {self._limit_s:.0f}s)"
@@ -205,6 +216,16 @@ class MusicService:
             return
         self._limit = self._loop.call_later(max(seconds, 0.0), lambda: asyncio.ensure_future(self.stop("time limit")))
 
+    def _rearm(self) -> None:
+        """Stop at whichever comes first: the song's end (its limit, measured in position) or the cap on time listened.
+        Without a seek the two are the same clock."""
+        if self._limit_s <= 0:
+            self._arm_limit(0.0)
+            return
+        position = self._position_before + self._running()
+        played = self._played_before + self._running()
+        self._arm_limit(min(self._limit_s - position, self._max_song_seconds - played))
+
     # ---- events from outside ------------------------------------------------------------------------------------
 
     def _on_finished(self) -> None:
@@ -233,14 +254,15 @@ class MusicService:
         now = time.monotonic()
         if want:   # the clock and the time limit stand still while it is paused
             if self._stretch_start is not None:
-                self._elapsed_before += now - self._stretch_start
+                self._position_before += now - self._stretch_start
+                self._played_before += now - self._stretch_start
                 self._stretch_start = None
             if self._limit is not None:
                 self._limit.cancel()
                 self._limit = None
         else:
             self._stretch_start = now
-            self._arm_limit(self._limit_s - self._elapsed_before)
+            self._rearm()
         return True
 
     async def pause(self) -> None:
@@ -271,6 +293,43 @@ class MusicService:
             return False
         self._user_paused = False
         await self._sync_player()
+        return True
+
+    # ---- seeking: the phone jumps to another place in the song ---------------------------------------------------
+
+    def _seek_ceiling(self) -> float:
+        """The furthest place to jump to: two seconds before the stop point, so dragging to the very end plays the last
+        moments and lets the song finish by itself instead of being cut."""
+        end = self._track.duration_sec if self._track and self._track.duration_sec else 0.0
+        if self._limit_s > 0:
+            end = min(end, self._limit_s)
+        return max(0.0, end - 2.0)
+
+    async def seek(self, position_s: float) -> bool:
+        """Jump to `position_s` seconds into the song (clamped to the song). False when this song cannot be jumped in:
+        nothing is playing, or its length is unknown (a live stream). Raises MusicError when the player would not do it;
+        the position is then unchanged.
+
+        The shown position moves to the target and counts on from there; the time LISTENED to does not rewind, and the stop
+        timer is set again from the new place, so jumping back never cuts a song short and jumping around never lets it
+        run past the cap on listening time."""
+        if not self.seekable:
+            return False
+        target = min(max(float(position_s), 0.0), self._seek_ceiling())
+        try:
+            await self._player.seek(target)
+        except Exception as e:
+            logger.warning(f"[music] could not seek: {type(e).__name__}: {e}")
+            raise MusicError(f"seek failed: {type(e).__name__}", "Couldn't jump just now. Try again.") from e
+        if self._state != PLAYING:   # stopped while the player was busy
+            return False
+        now = time.monotonic()
+        if self._stretch_start is not None:
+            self._played_before += now - self._stretch_start
+            self._stretch_start = now
+        self._position_before = target
+        if self._stretch_start is not None:   # paused: no timer runs, and none is started
+            self._rearm()
         return True
 
 

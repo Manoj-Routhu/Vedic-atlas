@@ -12,4 +12,6 @@ export interface MusicApi {
   stopMusic(signal?: AbortSignal): Promise<MusicInfo>;
   pauseMusic(signal?: AbortSignal): Promise<MusicInfo>;
   resumeMusic(signal?: AbortSignal): Promise<MusicInfo>;
+  /** Jump to this many seconds into the song. The Pi keeps it inside the song. */
+  seekMusic(positionS: number, signal?: AbortSignal): Promise<MusicInfo>;
 }

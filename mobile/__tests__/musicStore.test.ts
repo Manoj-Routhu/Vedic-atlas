@@ -6,7 +6,7 @@ import { MIC_MESSAGES } from '../src/features/look/lookStore';
 import { createMusicStore, elapsedNow } from '../src/features/music/musicStore';
 
 const info = (patch: Partial<MusicInfo> = {}): MusicInfo => ({
-  available: true, reason: null, state: 'idle', title: null, elapsedS: null, limitS: null, durationS: null, ...patch,
+  available: true, reason: null, state: 'idle', title: null, elapsedS: null, limitS: null, durationS: null, seekable: false, ...patch,
 });
 const playing = (patch: Partial<MusicInfo> = {}) => info({ state: 'playing', title: 'Tum Hi Ho - Arijit Singh', elapsedS: 10, limitS: 300, durationS: 262, ...patch });
 
@@ -43,6 +43,16 @@ class FakeApi {
     this.status = { ...this.status, state: 'playing' };
     return this.status;
   }
+  seeks: number[] = [];
+  seekGate: Promise<void> | null = null;
+  async seekMusic(positionS: number) {
+    this.calls.push(`seek:${positionS}`);
+    this.seeks.push(positionS);
+    if (this.seekGate) await this.seekGate;
+    if (this.failWith) throw this.failWith;
+    this.status = { ...this.status, elapsedS: positionS };
+    return this.status;
+  }
 }
 
 class FakeRecognizer implements Recognizer {
@@ -69,7 +79,7 @@ function setup(opts: { now?: () => number } = {}) {
   const api = new FakeApi();
   const recognizer = new FakeRecognizer();
   const errors: ApiError[] = [];
-  const store = createMusicStore({ getApi: () => api as unknown as PiApi, recognizer, onApiError: (e) => errors.push(e), refreshMs: 20, now: opts.now });
+  const store = createMusicStore({ getApi: () => api as unknown as PiApi, recognizer, onApiError: (e) => errors.push(e), refreshMs: 20, now: opts.now, skipMergeMs: 30 });
   return { api, recognizer, store, errors };
 }
 
@@ -249,5 +259,127 @@ describe('saying the song', () => {
     store.getState().reset();
     expect(store.getState().info).toBeNull();
     expect(store.getState().loading).toBe(true);
+  });
+});
+
+const seekable = (patch: Partial<MusicInfo> = {}) => playing({ seekable: true, elapsedS: 100, limitS: 277, durationS: 262, ...patch });
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe('jumping around in the song', () => {
+  async function ready(patch: Partial<MusicInfo> = {}) {
+    const ctx = setup({ now: () => 1_000 });
+    ctx.api.status = seekable(patch);
+    await ctx.store.getState().refresh();
+    return ctx;
+  }
+
+  it('seekTo sends the place once, shows it at once, and then takes the answer from the Pi', async () => {
+    const { store, api } = await ready();
+    let release: () => void = () => {};
+    api.seekGate = new Promise<void>((r) => (release = r));
+    store.getState().seekTo(30);
+    await wait(0);
+    expect(store.getState().seekTarget).toBe(30); // the bar is already there while the Pi is still answering
+    expect(api.seeks).toEqual([30]);
+    release();
+    await wait(0);
+    expect(store.getState().seekTarget).toBeNull();
+    expect(store.getState().info?.elapsedS).toBe(30);
+  });
+
+  it('keeps the place inside the song, two seconds short of where it stops', async () => {
+    const { store, api } = await ready();
+    store.getState().seekTo(-20);
+    await wait(0);
+    store.getState().seekTo(9_999);
+    await wait(0);
+    expect(api.seeks).toEqual([0, 260]);
+  });
+
+  it('with a stop point before the end of the song the place stays before the stop point', async () => {
+    const { store, api } = await ready({ durationS: 600, limitS: 100 });
+    store.getState().seekTo(500);
+    await wait(0);
+    expect(api.seeks).toEqual([98]);
+  });
+
+  it('quick taps on skip are added up and sent as ONE jump', async () => {
+    const { store, api } = await ready({ elapsedS: 100 });
+    store.getState().skip(10);
+    store.getState().skip(10);
+    store.getState().skip(10);
+    expect(store.getState().seekTarget).toBe(130); // 100 s now (the test clock is frozen), plus three taps of 10
+    expect(api.seeks).toEqual([]);                 // nothing sent while the taps are still arriving
+    await wait(80);
+    expect(api.seeks).toEqual([130]);
+    expect(store.getState().seekTarget).toBeNull();
+  });
+
+  it('skipping back and forth cancels out, and a long run of taps stops at the ends', async () => {
+    const { store, api } = await ready({ elapsedS: 5 });
+    store.getState().skip(-10);
+    expect(store.getState().seekTarget).toBe(0);
+    store.getState().skip(10);
+    expect(store.getState().seekTarget).toBe(10);
+    await wait(80);
+    expect(api.seeks).toEqual([10]);
+  });
+
+  it('dragging after a skip uses the dragged place, not the taps', async () => {
+    const { store, api } = await ready();
+    store.getState().skip(10);
+    store.getState().seekTo(50);
+    await wait(80);
+    expect(api.seeks).toEqual([50]);
+  });
+
+  it('does nothing when the song cannot be jumped in, when nothing plays, or for a bad number', async () => {
+    const live = await ready({ seekable: false, durationS: null });
+    live.store.getState().seekTo(30);
+    live.store.getState().skip(10);
+    const idle = setup();
+    idle.store.getState().seekTo(30);
+    const ok = await ready();
+    ok.store.getState().seekTo(Number.NaN);
+    ok.store.getState().skip(Number.POSITIVE_INFINITY);
+    await wait(80);
+    expect([live.api.seeks, idle.api.seeks, ok.api.seeks]).toEqual([[], [], []]);
+    expect(live.store.getState().seekTarget).toBeNull();
+  });
+
+  it('works while paused', async () => {
+    const { store, api } = await ready({ state: 'paused' });
+    store.getState().seekTo(40);
+    await wait(0);
+    expect(api.seeks).toEqual([40]);
+  });
+
+  it('a jump the Pi refuses says so in plain words and the bar goes back to the real place', async () => {
+    const { store, api, errors } = await ready();
+    api.failWith = new ApiError('seekFailed');
+    store.getState().seekTo(30);
+    await wait(10);
+    expect(store.getState().error?.userMessage).toBe("Couldn't jump just now. Try again.");
+    expect(store.getState().seekTarget).toBeNull();
+    expect(errors.map((e) => e.kind)).toEqual(['seekFailed']);
+  });
+
+  it('taps still being added up when the song ends send nothing', async () => {
+    const { store, api } = await ready();
+    store.getState().skip(10);
+    api.status = info();
+    await store.getState().refresh();
+    await wait(80);
+    expect(api.seeks).toEqual([]);
+    expect(store.getState().seekTarget).toBeNull();
+  });
+
+  it('reset forgets taps that were waiting', async () => {
+    const { store, api } = await ready();
+    store.getState().skip(10);
+    store.getState().reset();
+    await wait(80);
+    expect(api.seeks).toEqual([]);
+    expect(store.getState().seekTarget).toBeNull();
   });
 });

@@ -39,6 +39,8 @@ class Player:
         self.paused = 0
         self.resumed = 0
         self.fail_pause = False
+        self.seeks = []
+        self.fail_seek = False
 
     async def start(self, url, on_finished):
         self.started.append(url)
@@ -51,6 +53,11 @@ class Player:
 
     async def resume(self):
         self.resumed += 1
+
+    async def seek(self, position_s):
+        if self.fail_seek:
+            raise OSError("no control channel")
+        self.seeks.append(position_s)
 
     async def stop(self):
         self.is_playing = False
@@ -267,7 +274,7 @@ def client():
 def test_status_when_idle(client):
     r = client.get("/api/music/status")
     assert r.status_code == 200
-    assert r.json() == {"available": True, "reason": None, "state": "idle", "title": None, "elapsed_s": None, "limit_s": None, "duration_s": None}
+    assert r.json() == {"available": True, "reason": None, "state": "idle", "title": None, "elapsed_s": None, "limit_s": None, "duration_s": None, "seekable": False}
 
 
 def test_play_names_the_song_it_chose_then_pause_resume_stop(client):
@@ -323,7 +330,7 @@ def test_when_music_is_not_available_status_still_answers_and_says_why(client, r
 
 @pytest.mark.parametrize("method,path", [
     ("GET", "/api/music/status"), ("POST", "/api/music/play"), ("POST", "/api/music/stop"),
-    ("POST", "/api/music/pause"), ("POST", "/api/music/resume"),
+    ("POST", "/api/music/pause"), ("POST", "/api/music/resume"), ("POST", "/api/music/seek"),
 ])
 def test_only_a_phone_with_the_control_permission_may_use_music(method, path):
     assert scope_for(method, path) == "control"

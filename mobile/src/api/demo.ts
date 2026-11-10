@@ -111,6 +111,8 @@ export class DemoApi implements PiApi {
     } else {
       reply = "That's a demo answer. Pair with your Pi to get a real one.";
     }
+    // like the real Pi: a short "working on it" line first, so the demo shows what a slow answer looks like
+    yield { type: 'filler', text: /[ऀ-ॿ]/.test(message) ? 'सोचने दीजिए।' : 'Let me think.' };
     for (const word of reply.split(' ')) {
       if (signal?.aborted) return;
       await sleep(this.wordMs, signal);
@@ -195,9 +197,9 @@ export class DemoApi implements PiApi {
 
   private musicInfo(): MusicInfo {
     const s = this.song;
-    if (!s) return { available: true, reason: null, state: 'idle', title: null, elapsedS: null, limitS: null, durationS: null };
+    if (!s) return { available: true, reason: null, state: 'idle', title: null, elapsedS: null, limitS: null, durationS: null, seekable: false };
     const elapsed = s.playedBefore + (s.since !== null ? (Date.now() - s.since) / 1000 : 0);
-    return { available: true, reason: null, state: s.paused ? 'paused' : 'playing', title: s.title, elapsedS: elapsed, limitS: 300, durationS: null };
+    return { available: true, reason: null, state: s.paused ? 'paused' : 'playing', title: s.title, elapsedS: elapsed, limitS: 255, durationS: 240, seekable: true };
   }
 
   async musicStatus(): Promise<MusicInfo> {
@@ -234,6 +236,14 @@ export class DemoApi implements PiApi {
       s.since = Date.now();
       s.paused = false;
     }
+    return this.musicInfo();
+  }
+
+  async seekMusic(positionS: number): Promise<MusicInfo> {
+    const s = this.song;
+    if (!s) throw new ApiError('nothingPlaying');
+    s.playedBefore = Math.min(Math.max(positionS, 0), 238); // like the Pi: never closer than 2 s to the end
+    if (s.since !== null) s.since = Date.now();
     return this.musicInfo();
   }
 

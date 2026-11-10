@@ -40,6 +40,10 @@ class MusicPlayerPort(Protocol):
     async def resume(self) -> None:
         ...
 
+    async def seek(self, position_s: float) -> None:
+        """Jump to `position_s` seconds from the start of the song. Raises when the player cannot do it."""
+        ...
+
     async def stop(self) -> None:
         """Stop and release everything. Safe to call when nothing is playing."""
         ...

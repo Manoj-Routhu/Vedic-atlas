@@ -24,6 +24,8 @@ export type ErrorKind =
   | 'songNotFound'
   | 'musicOff'
   | 'nothingPlaying'
+  | 'notSeekable'
+  | 'seekFailed'
   | 'notFound'
   | 'server'
   | 'cutOff'
@@ -52,6 +54,8 @@ const MESSAGES: Record<ErrorKind, string> = {
   songNotFound: "I couldn't find that song, or the music search didn't answer. Try again, and add the artist.",
   musicOff: "Music isn't available on your Pi.",
   nothingPlaying: 'Nothing is playing.',
+  notSeekable: "This song can't be skipped through.",
+  seekFailed: "Couldn't jump just now. Try again.",
   notFound: "The Pi couldn't find that.",
   server: 'Your Pi had a problem. Try again.',
   cutOff: 'The answer was cut off.',
@@ -130,6 +134,8 @@ export function apiErrorFromResponse(
   }
   if (status === 404) return new ApiError(code === 'MUSIC_NOT_FOUND' ? 'songNotFound' : 'notFound', details);
   if (status === 409 && code === 'MUSIC_NOT_PLAYING') return new ApiError('nothingPlaying', details);
+  if (status === 409 && code === 'MUSIC_NOT_SEEKABLE') return new ApiError('notSeekable', details);
+  if (status === 502 && code === 'MUSIC_SEEK_FAILED') return new ApiError('seekFailed', details);
   if (status === 422) {
     if (code === 'IMAGE_INVALID') return new ApiError(lower.includes('expired') ? 'photoExpired' : 'photoRejected', details);
     return new ApiError('validation', details);
